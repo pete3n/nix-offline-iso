@@ -48,7 +48,12 @@
           ({ pkgs, lib, ... }: {
             nixpkgs.overlays = [
               (self: super: {
-                calamares-nixos-extensions = super.callPackage ./pkgs/calamares-nixos-extensions-offline { };
+                calamares-nixos-extensions = super.calamares-nixos-extensions.overrideAttrs (oldAttrs: rec {
+                  patches = oldAttrs.patches or [] ++ [ 
+                    ./patches/welcome.patch 
+                    ./patches/nixos.patch
+                  ];
+                });
               })
             ];
           })
