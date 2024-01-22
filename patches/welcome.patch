@@ -1,0 +1,18 @@
+--- a/config/modules/welcome.conf
++++ b/config/modules/welcome.conf
+@@ -52,7 +52,6 @@ requirements:
+         - storage
+         - ram
+         - power
+-        - internet
+         - screen
+     # List conditions that **must** be satisfied (from the list
+     # of conditions, above) for installation to proceed.
+@@ -61,7 +60,6 @@ requirements:
+     required:
+         - storage
+         - ram
+-        - internet
+
+ # GeoIP checking
+ #
