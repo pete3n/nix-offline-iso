@@ -72,7 +72,7 @@ you to use any number of files and sub-directories for your configuration.
 ### Dynamic Configuration
 - The installer will look for user configuration files in /tmp/nix-cfg prior to
 searching /iso/nix-cfg. This allows you to dynamically change the system configuration
-after booting into the installation environment. 
+after booting into the installation environment 
 - If configuration changes add dependencies, then the install will fail because
 they will be missing from the ISO's nix store
 
