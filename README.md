@@ -9,7 +9,7 @@ script to install user provided configuration files.
 ## Usage
 - [Install](https://nixos.org/download#download-nix) Nix or NixOS to your online build system and [enable flake](https://nixos.wiki/wiki/Flakes) support
 - Clone this repo to a directory where you wish to build your ISO
-- Copy your configuration files to the ./nix-cfg/nixos directory
+- Copy your configuration files to the ./nix-cfg directory
 - You will need to have a hardware-configuration.nix template file in this directory 
 with your configuraiton.nix file
 - The hardware-configuration.nix will be over-written by the installation process,
