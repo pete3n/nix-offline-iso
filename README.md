@@ -14,7 +14,7 @@ script to install user provided configuration files.
 with your configuraiton.nix file
 - The hardware-configuration.nix will be over-written by the installation process,
 but it is needed to build the configuration for the ISO
-- Include the [build dependencies directive](### Build Dependencies) in either your configuration.nix or
+- Include the [build dependencies directive](#build-dependencies) in either your configuration.nix or
 the ISO's flake.nix
 - Build the ISO with:
 ```
