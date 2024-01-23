@@ -23,7 +23,7 @@ nix build .#iso.offline-installer-x86_64-linux
 - Use dd or other imaging software to write your ISO image to disk
 - Boot your target system from the installation medium and start the install 
 process as normal
-- Ensure you configure the some desktop environment and user as your configuration
+- Ensure you configure the same desktop environment and user as in your configuration
 - The install may take a very long time (and appear stuck on 46%) this is because
 of the dependencies being copied. Toggle the log to view activity
 
