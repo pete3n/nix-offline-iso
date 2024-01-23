@@ -9,8 +9,9 @@ provided configuration files.
 ## Usage
 - [Install](https://nixos.org/download#download-nix) Nix or NixOS to your online build system and [enable flake](https://nixos.wiki/wiki/Flakes) support
 - Clone this repo to a directory where you wish to build your ISO
-- Copy your configuration files to the ./nix-cfg directory
-- You will need to have a hardware-configuration.nix template file in this directory with your configuraiton.nix file
+- Copy your configuration files to the ./nix-cfg/nixos directory
+- You will need to have a hardware-configuration.nix template file in this directory 
+with your configuraiton.nix file
 - The hardware-configuration.nix will be over-written by the installation process,
 but it is needed to build the configuration for the ISO
 
@@ -59,12 +60,17 @@ you to use any number of files and sub-directories for your configuration.
 ### Dynamic Configuration
 - The installer will look for user configuration files in /tmp/nix-cfg prior to
 searching /iso/nix-cfg. This allows you to dynamically change the system configuration
-after booting into the installation environment.
+after booting into the installation environment. 
 - If configuration changes add dependencies, then the install will fail because
 they will be missing from the ISO's nix store
 
+### Install Options
+- You must choose the same Desktop environment as your configuration.nix specifies
+otherwise the install will fail with missing dependencies
+- You must create the same user as your configuration.nix specifies, otherswise
+the installer will fail to set the password for your user
+
 ## Limitations
 Flake configurations are not supported. I have not found a way to make a flake
-based system configuration work completely offline. There are also [open issues]
-(https://github.com/NixOS/nix/issues/8953) related to this problem. If anyone
+based system configuration work completely offline. There are also [open issues](https://github.com/NixOS/nix/issues/8953) related to this problem. If anyone
 has a solution, I would be very interested in seeing it.
