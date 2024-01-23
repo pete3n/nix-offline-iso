@@ -24,7 +24,7 @@
         specialArgs = { inherit inputs; };
         inherit system;
         modules = [
-          ./nix-cfg/nixos/configuration.nix
+          ./nix-cfg/configuration.nix
           inputs.home-manager.nixosModules.default
           ({ pkgs, lib, ... }: {
             nixpkgs.overlays = [
