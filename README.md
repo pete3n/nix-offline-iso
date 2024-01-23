@@ -3,8 +3,8 @@ This repository provides a flake template for creating offline ISO images of the
 NixOS Calamares installer with Gnome. 
 
 It patches over v0.3.14 of the [Calamares NixOS Extensions](https://github.com/NixOS/calamares-nixos-extensions/tree/calamares)
-to disable checking for an online connection, and then will install with user
-provided configuration files.
+to disable checking for an online connection, and modifies the Nixos install module
+script to install user provided configuration files.
 
 ## Usage
 - [Install](https://nixos.org/download#download-nix) Nix or NixOS to your online build system and [enable flake](https://nixos.wiki/wiki/Flakes) support
