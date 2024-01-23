@@ -13,7 +13,7 @@
  
      # Check partitions
      for part in gs.value("partitions"):
-@@ -642,11 +644,50 @@ def run():
+@@ -642,11 +644,56 @@ def run():
          # Write the hardware-configuration.nix file
          libcalamares.utils.host_env_process_output(["cp", "/dev/stdin",
                                                      root_mount_point+"/etc/nixos/hardware-configuration.nix"], None, hardwareout)
@@ -34,7 +34,8 @@
 +    # Copying user provided configuraitons
 +    dynamic_config = "/tmp/nix-cfg/nixos/configuration.nix"
 +    iso_config = "/iso/nix-cfg/nixos/configuration.nix"
-+    config_dest = os.path.join(root_mount_point, "etc/nixos/configuration.nix")
++    with open(os.path.join(root_mount_point, "etc/nixos/hardware-configuration.nix"), "r") as hf:
++        hw_cfg = hf.read()
 +
 +    try:
 +        if os.path.exists (dynamic_config):
@@ -58,13 +59,18 @@
 +                    subprocess.run(["sudo", "cp", "-r", src_file, dest_file], check=True)
 +                else:
 +                    subprocess.run(["sudo", "cp", src_file, dest_file], check=True)
++
++        # Restore generated hardware-configuration
++        with open(os.path.join(root_mount_point, "etc/nixos/hardware-configuration.nix"), "w") as hf:
++            hf.write(hw_cfg)
++
 +    except subprocess.CalledProcessError as e:
 +        return ("Installation failed to copy configuration files", str(e))
 +
      status = _("Installing NixOS")
      libcalamares.job.setprogress(0.3)
  
-@@ -663,6 +704,7 @@ def run():
+@@ -663,6 +710,7 @@ def run():
          exit = proc.wait()
          if exit != 0:
              return (_("nixos-install failed"), _(output))
