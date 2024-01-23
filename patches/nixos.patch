@@ -1,18 +1,37 @@
 --- a/modules/nixos/main.py
 +++ b/modules/nixos/main.py
-@@ -647,6 +647,19 @@ def run():
+@@ -647,6 +647,38 @@ def run():
      libcalamares.utils.host_env_process_output(
          ["cp", "/dev/stdin", config], None, cfg)
 
-+    # Copying user provided configuraitons
-+    dynamic_config = "/tmp/nixos-offline/nixos/configuration.nix"
++    # Copying user provided configurations
++    dynamic_config = "/tmp/nix-cfg/nixos/configuration.nix"
 +    iso_config = "/iso/nix-cfg/nixos/configuration.nix"
 +    config_dest = os.path.join(root_mount_point, "etc/nixos/configuration.nix")
 +
 +    try:
 +        if os.path.exists (dynamic_config):
++            src_dir = "/tmp/nix-cfg/"
++            dest_dir = os.path.join(root_mount_point, "etc/nixos/")
++            for file in os.listdir(src_dir):
++                src_file = os.path.join(src_dir, file)
++                dest_file = os.path.join(dest_dir, file)
++                if os.path.isdir(src_file):
++                    subprocess.run(["sudo", "cp", "-r", src_file, dest_file], check=True)
++                else:
++                    subprocess.run(["sudo", "cp", src_file, dest_file], check=True)
 +            subprocess.run(["sudo", "cp", dynamic_config, config_dest], check=True)
++
 +        elif os.path.exists(iso_config):
++            src_dir = "/iso/nix-cfg/"
++            dest_dir = os.path.join(root_mount_point, "etc/nixos/")
++            for file in os.listdir(src_dir):
++                src_file = os.path.join(src_dir, file)
++                dest_file = os.path.join(dest_dir, file)
++                if os.path.isdir(src_file):
++                    subprocess.run(["sudo", "cp", "-r", src_file, dest_file], check=True)
++                else:
++                    subprocess.run(["sudo", "cp", src_file, dest_file], check=True)
 +            subprocess.run(["sudo", "cp", iso_config, config_dest], check=True)
 +    except subprocess.CalledProcessError as e:
 +        return ("Installation failed to copy configuration files", str(e))
@@ -20,7 +39,7 @@
      status = _("Installing NixOS")
      libcalamares.job.setprogress(0.3)
 
-@@ -663,6 +676,7 @@ def run():
+@@ -663,6 +695,7 @@ def run():
          exit = proc.wait()
          if exit != 0:
              return (_("nixos-install failed"), _(output))

@@ -13,31 +13,12 @@
     ...
   } @ inputs: let
     inherit (self) outputs;
-    # Supported systems for your flake packages, shell, etc.
     systems = [
       "aarch64-linux"
       "x86_64-linux"
     ];
-    # This is a function that generates an attribute by calling a function you
-    # pass to it, with each system as an argument
-    forAllSystems = nixpkgs.lib.genAttrs systems;
-  in rec {
-    # Your custom packages
-    # Accessible through 'nix build', 'nix shell', etc
-    packages = forAllSystems (system: import ./nix-cfg/pkgs nixpkgs.legacyPackages.${system});
-    # Formatter for your nix files, available through 'nix fmt'
-    # Other options beside 'alejandra' include 'nixpkgs-fmt'
-    formatter = forAllSystems (system: nixpkgs.legacyPackages.${system}.alejandra);
 
-    # Your custom packages and modifications, exported as overlays
-    overlays = import ./nix-cfg/overlays {inherit inputs;};
-    # Reusable nixos modules you might want to export
-    # These are usually stuff you would upstream into nixpkgs
-    nixosModules = import ./nix-cfg/modules/nixos;
-    # Reusable home-manager modules you might want to export
-    # These are usually stuff you would upstream into home-manager
-    homeManagerModules = import ./nix-cfg/modules/home-manager;
-
+    in rec {
     nixosConfigurationsForAllSystems = system: {
       "offline-installer-${system}" = nixpkgs.lib.nixosSystem {
         specialArgs = { inherit inputs; };
@@ -69,7 +50,7 @@
               storeContents = [ 
                 config.system.build.toplevel
               ];
-              includeSystemBuildDependencies = true;
+              #includeSystemBuildDependencies = true;
               squashfsCompression = "gzip -Xcompression-level 1";
             };
           })
