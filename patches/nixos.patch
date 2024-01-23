@@ -1,10 +1,35 @@
 --- a/modules/nixos/main.py
 +++ b/modules/nixos/main.py
-@@ -647,6 +647,38 @@ def run():
+@@ -377,8 +377,9 @@ def run():
+     # Setup encrypted swap devices. nixos-generate-config doesn't seem to notice them.
+     for part in gs.value("partitions"):
+         if part["claimed"] == True and part["fsName"] == "luks" and part["device"] is not None and part["fs"] == "linuxswap":
+-            cfg += """  boot.initrd.luks.devices."{}".device = "/dev/disk/by-uuid/{}";\n""".format(
++            luks_swap = """  boot.initrd.luks.devices."{}".device = "/dev/disk/by-uuid/{}";\n""".format(
+                 part["luksMapperName"], part["uuid"])
++            cfg += luks_swap
+ 
+     # Check partitions
+     for part in gs.value("partitions"):
+@@ -642,11 +643,50 @@ def run():
+         # Write the hardware-configuration.nix file
+         libcalamares.utils.host_env_process_output(["cp", "/dev/stdin",
+                                                     root_mount_point+"/etc/nixos/hardware-configuration.nix"], None, hardwareout)
++    # Add luks swap partition if it exists
++    if luks_swap is not None:
++        with open(root_mount_point + "/etc/nixos/hardware-configuration.nix", "r") as hf:
++            htxt = hf.read()
++        if htxt.strip().endswith("}"):
++            htxt = htxt.strip("}\n").rstrip()
++        htxt += luks_swap + "\n}\n"
++        libcalamares.utils.host_env_process_output(["cp", "/dev/stdin",
++                                                    root_mount_point+"/etc/nixos/hardware-configuration.nix"], None, htxt)
+ 
+     # Write the configuration.nix file
      libcalamares.utils.host_env_process_output(
          ["cp", "/dev/stdin", config], None, cfg)
-
-+    # Copying user provided configurations
+ 
++    # Copying user provided configuraitons
 +    dynamic_config = "/tmp/nix-cfg/nixos/configuration.nix"
 +    iso_config = "/iso/nix-cfg/nixos/configuration.nix"
 +    config_dest = os.path.join(root_mount_point, "etc/nixos/configuration.nix")
@@ -20,7 +45,6 @@
 +                    subprocess.run(["sudo", "cp", "-r", src_file, dest_file], check=True)
 +                else:
 +                    subprocess.run(["sudo", "cp", src_file, dest_file], check=True)
-+            subprocess.run(["sudo", "cp", dynamic_config, config_dest], check=True)
 +
 +        elif os.path.exists(iso_config):
 +            src_dir = "/iso/nix-cfg/"
@@ -32,18 +56,17 @@
 +                    subprocess.run(["sudo", "cp", "-r", src_file, dest_file], check=True)
 +                else:
 +                    subprocess.run(["sudo", "cp", src_file, dest_file], check=True)
-+            subprocess.run(["sudo", "cp", iso_config, config_dest], check=True)
 +    except subprocess.CalledProcessError as e:
 +        return ("Installation failed to copy configuration files", str(e))
 +
      status = _("Installing NixOS")
      libcalamares.job.setprogress(0.3)
-
-@@ -663,6 +695,7 @@ def run():
+ 
+@@ -663,6 +703,7 @@ def run():
          exit = proc.wait()
          if exit != 0:
              return (_("nixos-install failed"), _(output))
 +
      except:
          return (_("nixos-install failed"), _("Installation failed to complete"))
-
+ 

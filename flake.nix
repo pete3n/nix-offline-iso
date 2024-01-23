@@ -50,7 +50,7 @@
               storeContents = [ 
                 config.system.build.toplevel
               ];
-              #includeSystemBuildDependencies = true;
+              includeSystemBuildDependencies = true;
               squashfsCompression = "gzip -Xcompression-level 1";
             };
           })
