@@ -24,6 +24,8 @@ nix build .#iso.offline-installer-x86_64-linux
 - Boot your target system from the installation medium and start the install 
 process as normal
 - Ensure you configure the some desktop environment and user as your configuration
+- The install may take a very long time (and appear stuck on 46%) this is because
+of the dependencies being copied. Toggle the log to view activity
 
 ### Build Dependencies
 You must include system build dependencies in one of two ways:
