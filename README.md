@@ -14,6 +14,16 @@ provided configuration files.
 with your configuraiton.nix file
 - The hardware-configuration.nix will be over-written by the installation process,
 but it is needed to build the configuration for the ISO
+- Include the build dependencies directive in either your configuration.nix or
+the ISO's flake.nix
+- Build the ISO with:
+```
+nix build .#iso.offline-installer-x86_64-linux
+```
+- Use dd or other imaging software to write your ISO image to disk
+- Boot your target system from the installation medium and start the install 
+process as normal
+- Ensure you configure the some desktop environment and user as your configuration
 
 ### Build Dependencies
 You must include system build dependencies in one of two ways:
