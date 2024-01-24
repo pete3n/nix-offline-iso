@@ -73,7 +73,7 @@
 +                    subprocess.run(["sudo", "cp", src_file, dest_file], check=True)
 +            hw_modified = True
 +
-+        temp_filepath = None
++        temp_filepath = ""
 +        if hw_modified:
 +            # Restore generated hardware-configuration
 +            with tempfile.NamedTemporaryFile(mode="w", delete=False) as temp_file:
