@@ -34,6 +34,7 @@
 +    # Copying user provided configuraitons
 +    dynamic_config = "/tmp/nix-cfg/nixos/configuration.nix"
 +    iso_config = "/iso/nix-cfg/nixos/configuration.nix"
++    hw_cfg_dest = os.path.join(root_mount_point, "etc/nixos/hardware-configuration.nix")
 +    with open(os.path.join(root_mount_point, "etc/nixos/hardware-configuration.nix"), "r") as hf:
 +        hw_cfg = hf.read()
 +
@@ -61,8 +62,7 @@
 +                    subprocess.run(["sudo", "cp", src_file, dest_file], check=True)
 +
 +        # Restore generated hardware-configuration
-+        with open(os.path.join(root_mount_point, "etc/nixos/hardware-configuration.nix"), "w") as hf:
-+            hf.write(hw_cfg)
++        subprocess.run(['sudo', 'bash', '-c', f'echo "{hw_cfg}" > {hw_cfg_dest}'], check=True)
 +
 +    except subprocess.CalledProcessError as e:
 +        return ("Installation failed to copy configuration files", str(e))
