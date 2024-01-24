@@ -21,7 +21,7 @@
  
      # Check partitions
      for part in gs.value("partitions"):
-@@ -642,11 +645,68 @@ def run():
+@@ -642,11 +645,69 @@ def run():
          # Write the hardware-configuration.nix file
          libcalamares.utils.host_env_process_output(["cp", "/dev/stdin",
                                                      root_mount_point+"/etc/nixos/hardware-configuration.nix"], None, hardwareout)
@@ -73,6 +73,7 @@
 +                    subprocess.run(["sudo", "cp", src_file, dest_file], check=True)
 +            hw_modified = True
 +
++        temp_filepath = None
 +        if hw_modified:
 +            # Restore generated hardware-configuration
 +            with tempfile.NamedTemporaryFile(mode="w", delete=False) as temp_file:
@@ -90,7 +91,7 @@
      status = _("Installing NixOS")
      libcalamares.job.setprogress(0.3)
  
-@@ -663,6 +723,7 @@ def run():
+@@ -663,6 +724,7 @@ def run():
          exit = proc.wait()
          if exit != 0:
              return (_("nixos-install failed"), _(output))
