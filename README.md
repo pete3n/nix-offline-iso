@@ -7,8 +7,9 @@ It patches over v0.3.14 of the [Calamares NixOS Extensions](https://github.com/N
 to disable checking for an online connection, and modifies the Nixos install module
 script to install user provided configuration files.
 
-#NOTE: main branch is currently broken from upstream changes: https://github.com/NixOS/calamares-nixos-extensions/commit/556b2bd4e848686a3c22f009cbbb4fc0312206f5
-Use v0.3.14 branch
+# NOTE: main branch is currently broken from upstream changes: https://github.com/NixOS/calamares-nixos-extensions/commit/556b2bd4e848686a3c22f009cbbb4fc0312206f5
+
+## Use v0.3.14 branch
 
 ## Usage
 
