@@ -1,0 +1,66 @@
+--- a/modules/nixos/main.py
++++ b/modules/nixos/main.py
+@@ -14,6 +14,7 @@
+ import subprocess
+ 
+ import libcalamares
++import tempfile
+ 
+ _ = gettext.translation(
+     "calamares-python",
+@@ -810,6 +811,55 @@
+     # Write the configuration.nix file
+     libcalamares.utils.host_env_process_output(["cp", "/dev/stdin", config], None, cfg)
+ 
++    # Copying user provided configuraitons
++    dynamic_config = "/tmp/nix-cfg/configuration.nix"
++    iso_config = "/iso/nix-cfg/configuration.nix"
++    hw_cfg_dest = os.path.join(root_mount_point, "etc/nixos/hardware-configuration.nix")
++    hw_modified = False
++
++    try:
++        with open(hw_cfg_dest, "r") as hf:
++            hw_cfg = hf.read()
++
++        if os.path.exists (dynamic_config):
++            src_dir = "/tmp/nix-cfg/"
++            dest_dir = os.path.join(root_mount_point, "etc/nixos/")
++            for file in os.listdir(src_dir):
++                src_file = os.path.join(src_dir, file)
++                dest_file = os.path.join(dest_dir, file)
++                if os.path.isdir(src_file):
++                    subprocess.run(["sudo", "cp", "-r", src_file, dest_file], check=True)
++                else:
++                    subprocess.run(["sudo", "cp", src_file, dest_file], check=True)
++            hw_modified = True
++
++        elif os.path.exists(iso_config):
++            src_dir = "/iso/nix-cfg/"
++            dest_dir = os.path.join(root_mount_point, "etc/nixos/")
++            for file in os.listdir(src_dir):
++                src_file = os.path.join(src_dir, file)
++                dest_file = os.path.join(dest_dir, file)
++                if os.path.isdir(src_file):
++                    subprocess.run(["sudo", "cp", "-r", src_file, dest_file], check=True)
++                else:
++                    subprocess.run(["sudo", "cp", src_file, dest_file], check=True)
++            hw_modified = True
++
++        temp_filepath = ""
++        if hw_modified:
++            # Restore generated hardware-configuration
++            with tempfile.NamedTemporaryFile(mode="w", delete=False) as temp_file:
++                temp_file.write(hw_cfg)
++                temp_filepath = temp_file.name
++            subprocess.run(["sudo", "mv", temp_filepath, hw_cfg_dest], check=True)
++
++    except subprocess.CalledProcessError as e:
++        return ("Installation failed to copy configuration files", str(e))
++
++    finally:
++        if os.path.exists(temp_filepath):
++            os.remove(temp_filepath)
++
+     status = _("Installing NixOS")
+     libcalamares.job.setprogress(0.3)
+ 

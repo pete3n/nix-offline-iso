@@ -1,6 +1,6 @@
 {
   inputs = {
-    nixpkgs.url = "github:nixos/nixpkgs/nixos-23.11";
+    nixpkgs.url = "github:nixos/nixpkgs/nixos-24.11";
   };
 
   outputs =
@@ -28,12 +28,12 @@
                     src = super.fetchFromGitHub {
                       owner = "NixOS";
                       repo = "calamares-nixos-extensions";
-                      rev = "0.3.14";
-                      hash = "sha256-wRKZ80yU3WsUkGn5/ft4wDR22s39/WTxTrjFE0/9mlc=";
+                      rev = "0.3.19";
+                      hash = "sha256-/WdSMqtF8DKplsDx00l8HYijYvOUBb55Opv3Z8+T6QU=";
                     };
                     patches = oldAttrs.patches or [ ] ++ [
                       ./patches/welcome.patch
-                      ./patches/nixos.patch
+                      ./patches/main.patch
                     ];
                   });
                 })
