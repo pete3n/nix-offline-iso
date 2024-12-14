@@ -1,14 +1,15 @@
 --- a/modules/nixos/main.py
 +++ b/modules/nixos/main.py
-@@ -14,6 +14,7 @@
+@@ -12,7 +12,7 @@
+ import os
  import subprocess
- 
- import libcalamares
+ import re
+-
 +import tempfile
+ import gettext
  
  _ = gettext.translation(
-     "calamares-python",
-@@ -810,6 +811,55 @@
+@@ -806,6 +806,55 @@
      # Write the configuration.nix file
      libcalamares.utils.host_env_process_output(["cp", "/dev/stdin", config], None, cfg)
  
