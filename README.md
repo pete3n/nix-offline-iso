@@ -1,6 +1,6 @@
 # NixOS Offline ISO Builder
 
-This repository provides a flake template for creating offlinesdfasdfk ISO images of the
+This repository provides a flake template for creating offline ISO images of the
 NixOS Calamares installer with Gnome.
 
 It patches over v0.3.19 of the [Calamares NixOS Extensions](https://github.com/NixOS/calamares-nixos-extensions/tree/calamares)
