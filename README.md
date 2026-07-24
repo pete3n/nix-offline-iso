@@ -8,7 +8,7 @@ Targets **NixOS 26.05** and whatever `calamares-nixos-extensions` that channel
 ships. Two target styles are supported:
 
 - **channels** — a plain `configuration.nix` (classic, no flake)
-- **flake** — a `flake.nix` installed offline with `nixos-install --flake`
+- **flake** — a `flake.nix` (installed offline; see [Flake offline support](#flake-offline-support))
 
 ## How it works
 
@@ -22,23 +22,30 @@ The installer is the stock NixOS graphical Calamares (GNOME) image, with the
    (`calamares/inject/config-copy.py`) that copies your files from
    `/tmp/nix-cfg` or `/iso/nix-cfg` into `/etc/nixos`, preserving the
    freshly generated `hardware-configuration.nix`.
-3. Adds `--flake`/`--offline` to `nixos-install` when the copied config is a
-   flake.
+3. Removes Calamares' imperative password step (your config owns users and
+   passwords — see [Users and passwords](#users-and-passwords)).
+4. For a flake config, builds the system in the live installer store and
+   installs the result with `nixos-install --system` (see
+   [Flake offline support](#flake-offline-support)).
 
-Both injections are anchored on stable comments in the upstream source and are
-guarded: **the build fails loudly if an anchor ever disappears**, instead of
-silently shipping a no-op installer. This is the fix for the recurring breakage
-where an upstream rewrite invalidated the old line-context patches.
+These source transforms are anchored on stable comments/strings in the upstream
+source and are **guarded: the build fails loudly if an anchor ever disappears**,
+instead of silently shipping a no-op installer. This is the fix for the
+recurring breakage where an upstream rewrite invalidated the old line-context
+patches.
 
 The installer is also configured to run nix **fully offline** during install
 (`nix.settings.substituters = [ ]` and `flake-registry = ""`). Without this,
 `nixos-install` reaches out to `cache.nixos.org` (binary-cache probe) and
 `channels.nixos.org` (global flake registry) and fails with no network — which
 is the whole point of the ISO. Consequently the ISO store must be
-self-sufficient: the target's **build dependencies** are baked in (channels via
-`isoImage.includeSystemBuildDependencies`; the flake target via
-`system.includeBuildDependencies`), so the install can rebuild locally after
-`nixos-generate-config` regenerates `hardware-configuration.nix`.
+self-sufficient. Because `nixos-generate-config` regenerates
+`hardware-configuration.nix` for the real machine at install time, the installed
+system differs slightly from what was pre-built, so a small rebuild is
+unavoidable — the ISO therefore bakes the target's **build/derivation closure**
+(channels via `isoImage.includeSystemBuildDependencies`; the flake target via
+its `toplevel.drvPath` plus `system.includeBuildDependencies`) so that rebuild
+runs offline from sources already in the store.
 
 ## Layout
 
@@ -77,9 +84,13 @@ nix build .#iso.flake-x86_64-linux
 ```
 
 5. Write the ISO to disk with `dd` (or image it into a VM — see Testing).
-6. Boot the target, run the installer as normal. Pick options consistent with
-   your config (desktop, user). The install may sit at ~46% for a long time
-   while dependencies copy — toggle the log to see activity.
+6. Boot the target and run the installer. Do the **partitioning** in the GUI —
+   that part is real and is used. Most other GUI choices (locale, desktop, extra
+   packages, the user) are **cosmetic**: your config is authoritative and
+   overwrites the generated `configuration.nix`, so just click through them. For
+   a **flake** target, set the **hostname** to match your
+   `nixosConfigurations.<name>`. The install may appear to sit for a long time
+   while it copies and rebuilds from the store — toggle the log to see activity.
 
 ### Users and passwords
 
@@ -100,62 +111,46 @@ The installer prefers `/tmp/nix-cfg` over the baked-in `/iso/nix-cfg`, so you
 can edit the config after booting the live environment. If your edits add
 dependencies that aren't in the ISO store, the offline install will fail.
 
-## Flake offline support (experimental)
+## Flake offline support
 
 Offline `nixos-install --flake` is the hard part (see
-[nix#8953](https://github.com/NixOS/nix/issues/8953)): evaluation needs every
-flake input available without network, and simply having the input's store path
-present is NOT enough — nix won't resolve a locked `github:` input from the
-store offline.
+[nix#8953](https://github.com/NixOS/nix/issues/8953)): the flake must both
+*evaluate* and *build* without network. The `flake-*` target solves this in
+three pieces.
 
-The `flake-*` target sidesteps this by pinning `nixpkgs` to a **local store
-path in the flake itself**:
+**1. Evaluate offline — pin `nixpkgs` to a store path.** Having the input's
+store path present is not enough: nix won't resolve a locked `github:` input
+from the store offline, and it won't reliably consult the system flake registry
+for input resolution during `nixos-install` (and we disable the global
+registry). So at ISO-build time the builder bakes a *copy* of your flake whose
+`nixpkgs` input is rewritten to `path:/nix/store/…-source` (the nixpkgs already
+in the ISO store), together with a matching, complete `flake.lock`. A `path:`
+input with a complete lock needs no registry and no network — and nix never has
+to *write* a lock, which for a `path:` flake would mutate the directory
+mid-evaluation and cause a NAR-hash mismatch. Your repo's
+`configs/flake/flake.nix` stays clean (the indirect ref `"nixpkgs"`); only the
+baked ISO copy carries the store path.
 
-- `configs/flake/flake.nix` in the repo stays clean — `nixpkgs` is an indirect
-  ref (`"nixpkgs"`).
-- At ISO-build time the builder bakes a *copy* of the flake whose `nixpkgs`
-  input is rewritten to `path:/nix/store/…-source` (the nixpkgs already in the
-  ISO store). A `path:` input needs no flake registry and no network, so
-  `nixos-install --flake` locks and evaluates it fully offline.
+**2. Build offline — build in the live store, install with `--system`.**
+`nixos-install --flake` would realize the system into the empty target store,
+which offline can't be populated (substituters are disabled), so it would
+rebuild the toolchain from source and fail. Instead the `nixos` module builds
+the flake's `toplevel` in the **live installer store** (where every build input
+is already present) and passes the finished path to `nixos-install --system`,
+which just copies the closure to the target. The Calamares hostname must match a
+`nixosConfigurations.<name>` attribute in the flake.
 
-This is deliberately not a registry pin: during `nixos-install --flake`,
-indirect-input resolution does not reliably consult the system registry (and we
-disable the global one), and a locked `github:` input can't be resolved from the
-store offline. A `path:` input avoids resolution entirely.
+**3. Have the inputs — bake the closure.** The ISO store carries the target
+system's built closure, its derivation closure (`.drv`s + source tarballs, for
+the small hardware-config rebuild), and the nixpkgs source.
 
-The installer also does **not** run `nixos-install --flake` directly. That
-realizes the system into the empty target store, which offline cannot be
-populated (substituters are disabled), so it rebuilds the toolchain from source
-and fails. Instead the `nixos` module builds the flake's `toplevel` in the
-**live installer store** (where every build input is already present) and hands
-the finished path to `nixos-install --system`, which just copies the closure to
-the target. The Calamares hostname must match a `nixosConfigurations.<name>`
-attribute in the flake.
+You do **not** commit a `configs/flake/flake.lock` — the builder generates the
+path-pinned lock for the ISO copy. The repo `flake.nix` uses an indirect
+`nixpkgs` so it still resolves normally on a networked machine.
 
-**Do NOT commit a `configs/flake/flake.lock`** — a github-pinned lock would
-override the path rewrite and reintroduce the offline fetch failure. If you
-generated one during earlier experiments, delete it:
-
-```
-rm -f configs/flake/flake.lock
-```
-
-**After install**, the target's `/etc/nixos/flake.nix` will have the store-path
-`nixpkgs` ref. For online rebuilds later, repoint it to a normal channel, e.g.
-`nixpkgs.url = "github:nixos/nixpkgs/nixos-26.05";`, and `nix flake update`.
-
-The `flake-*` target additionally pulls into the ISO store:
-
-- the target system's built closure (so the build is a store copy, not a
-  rebuild),
-- the flake source tree, and
-- the nixpkgs input source tree (unified via `follows`, so there's only one).
-
-Install then runs with `--offline`. **This path still needs validation on real
-hardware / a VM** — if `--offline` evaluation still reaches for the network on
-your nixpkgs version, the fallback is to vendor the flake inputs as `path:`
-references. Keep `configs/flake/flake.lock` pinned to the same nixpkgs revision
-the ISO builder uses.
+**After install**, the target's `/etc/nixos/flake.nix` carries the store-path
+`nixpkgs` ref. For online rebuilds later, repoint it to a channel, e.g.
+`nixpkgs.url = "github:nixos/nixpkgs/nixos-26.05";`, then `nix flake update`.
 
 ## Testing in a VM
 
@@ -170,6 +165,14 @@ qemu-system-x86_64 -enable-kvm -m 4096 -smp 2 \
 Add `-nic user,hostfwd=tcp::2222-:22` instead of `-nic none` after install to
 SSH into the installed system (the example configs enable SSH; test password is
 `test`).
+
+The example configs are minimal and **headless** (SSH only, no desktop), so the
+installed system has no graphical output under SPICE/quickemu — that's expected,
+not a failure; SSH in to verify it. Add a desktop environment (and, for VMs, a
+guest video setup like `services.spice-vdagentd.enable`) to your config if you
+want a GUI. Note also that the stock installer image logs a failed
+`xe-daemon.service` (Xen guest agent) on non-Xen VMs like QEMU — harmless and
+unrelated to the install.
 
 ### Free disk space
 
