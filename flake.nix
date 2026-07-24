@@ -184,23 +184,60 @@
               modules = [ { system.includeBuildDependencies = true; } ];
             }).config.system.build.toplevel;
 
+          # A pre-computed flake.lock that pins the copied flake's `nixpkgs`
+          # input to the nixpkgs source path in the ISO store. Baking a COMPLETE
+          # lock is essential: with no lock, `nixos-install --flake` auto-writes
+          # one into the flake dir, and for a path: flake that write mutates the
+          # dir mid-evaluation, so the flake's own NAR hash no longer matches
+          # what nix just computed ("NAR hash mismatch in input path:/…/etc/nixos").
+          # A complete matching lock means nix resolves nothing and writes
+          # nothing. `original` matches the `path:` url in the rewritten
+          # flake.nix, so nix never tries to re-resolve via the (unavailable
+          # offline) registry.
+          targetLock = builtins.toJSON {
+            version = 7;
+            root = "root";
+            nodes = {
+              root = {
+                inputs = {
+                  nixpkgs = "nixpkgs";
+                };
+              };
+              nixpkgs = {
+                original = {
+                  type = "path";
+                  path = "${nixpkgs}";
+                };
+                locked = {
+                  type = "path";
+                  path = "${nixpkgs}";
+                  narHash = nixpkgs.narHash;
+                  lastModified = nixpkgs.lastModified;
+                };
+              };
+            };
+          };
+
           # The copy of the flake that gets baked onto the ISO and installed to
           # the target. We rewrite its `nixpkgs` input from the indirect
           # `"nixpkgs"` to a `path:` pointing at the nixpkgs source already in
-          # the ISO store. A path: input needs NO flake-registry lookup and NO
-          # network — nix locks it locally and evaluates offline. This is the
-          # reliable fix: registry resolution of an indirect input fails during
-          # `nixos-install --flake` (we disable the global registry, and system
-          # registry entries aren't consulted for input locking), and a locked
-          # github: input can't be resolved from the store offline (nix#8953).
-          # The repo's configs/flake/flake.nix stays clean (indirect); only this
-          # baked copy carries the store path. Users repoint it to a normal
-          # github ref after install for online rebuilds (see README).
+          # the ISO store, and ship the matching lock above. A path: input needs
+          # NO flake-registry lookup and NO network — nix evaluates it offline.
+          # This is the reliable fix: registry resolution of an indirect input
+          # fails during `nixos-install --flake` (we disable the global
+          # registry, and system registry entries aren't consulted for input
+          # locking), and a locked github: input can't be resolved from the
+          # store offline (nix#8953). The repo's configs/flake/flake.nix stays
+          # clean (indirect); only this baked copy carries the store path. Users
+          # repoint it to a github ref after install for online rebuilds (README).
           flakeCfgDir = pkgs.runCommand "offline-flake-cfg" { } ''
             cp -r ${./configs/flake} $out
             chmod -R u+w $out
             substituteInPlace $out/flake.nix \
               --replace-fail 'nixpkgs.url = "nixpkgs";' 'nixpkgs.url = "path:${nixpkgs}";'
+            cp ${pkgs.writeText "flake.lock" targetLock} $out/flake.lock
+            # Keep it writable in case nix ever wants to touch it on the target.
+            chmod u+w $out/flake.lock
           '';
         in
         nixpkgs.lib.nixosSystem {
@@ -214,11 +251,19 @@
               # Bake the path-pinned copy (not ./configs/flake) so the installed
               # flake resolves nixpkgs from the store offline.
               cfgDir = flakeCfgDir;
-              # target system closure (build is a store copy, not a rebuild) +
-              # flake source + nixpkgs source (the path: input target).
               extraStoreContents = [
+                # Built target system (runtime closure) — unchanged parts are a
+                # store copy, not a rebuild.
                 targetToplevel
-                target-flake.outPath
+                # The target's DERIVATION closure: .drvs + source tarballs, so
+                # the parts that differ from the pre-baked build (because
+                # nixos-generate-config regenerates hardware-configuration.nix)
+                # can be rebuilt OFFLINE from source. This is the exact thing
+                # `isoImage.includeSystemBuildDependencies` bakes for the
+                # channels target; without it, offline rebuild fails fetching
+                # e.g. bash-5.3.tar.gz.
+                targetToplevel.drvPath
+                # nixpkgs source — the path: input the copied flake evaluates.
                 nixpkgs.outPath
               ];
             })
