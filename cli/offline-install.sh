@@ -79,10 +79,10 @@ if [ -n "$DISK" ]; then
   sync
   udevadm settle || true
   # Mount with explicit filesystem types so mount never guesses. Mount the ESP
-  # with umask=0077 so it is NOT world-readable: systemd-boot stores a random
-  # seed there and warns ("world accessible ... security hole") otherwise. This
-  # also runs before nixos-generate-config, so the generated /boot filesystem
-  # inherits the secure options.
+  # with umask=0077 (owner-only) so the random seed isn't world-readable in the
+  # window before nixos-install remounts it per the generated config. (The
+  # authoritative fix is tightening the mask in hardware-configuration.nix
+  # below, since nixos-install remounts /boot per that config.)
   mount -t ext4 "$part2" "$ROOT"
   mkdir -p "$ROOT/boot"
   mount -t vfat -o umask=0077 "$part1" "$ROOT/boot"
@@ -109,6 +109,13 @@ echo ">> Using configuration from $src"
 # --- generate hardware config, then overlay the user's config ---------------
 nixos-generate-config --root "$ROOT"
 hw="$ROOT/etc/nixos/hardware-configuration.nix"
+# NixOS 26.05's nixos-generate-config records the ESP with fmask=0022 dmask=0022
+# (files 0644 — world-readable), which trips systemd-boot's random-seed warning
+# ("/boot ... world accessible ... security hole") and leaves it insecure on the
+# installed system. Tighten the boot-partition mask so the seed isn't readable
+# by non-root. nixos-install remounts /boot per this config, so this is the
+# authoritative fix (the mount option in the auto-partition step is not enough).
+sed -i 's/\(fmask\|dmask\|umask\)=0022/\1=0077/g' "$hw"
 hw_saved="$(mktemp)"
 cp "$hw" "$hw_saved"
 cp -rT "$src" "$ROOT/etc/nixos"
