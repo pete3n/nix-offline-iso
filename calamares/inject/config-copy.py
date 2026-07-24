@@ -25,8 +25,8 @@
         _offline_src = None
 
     # Always define this: the nixos-install command below references it
-    # unconditionally (see the injected --flake spread).
-    offline_flake_ref = None
+    # unconditionally (see the injected --system spread).
+    offline_system_path = None
     _offline_hw_dest = os.path.join(
         root_mount_point, "etc/nixos/hardware-configuration.nix"
     )
@@ -72,12 +72,43 @@
             if _offline_tmp and os.path.exists(_offline_tmp):
                 os.remove(_offline_tmp)
 
-        # If the copied config is a flake, switch nixos-install to flake mode.
-        # The hostname the user entered in Calamares must match a
-        # nixosConfigurations.<name> attribute in their flake.
+        # If the copied config is a flake, build it in the LIVE (installer)
+        # store and install the finished path with `nixos-install --system`.
+        #
+        # We deliberately do NOT use `nixos-install --flake`: that realizes the
+        # system into the empty target store, which offline cannot be populated
+        # (substituters are disabled), so it falls back to building the whole
+        # toolchain from source and fails fetching sources. Building here, in
+        # the live store, succeeds because every build input is already present
+        # on the ISO; `nixos-install --system` then just COPIES the closure to
+        # the target. The hostname entered in Calamares must match a
+        # nixosConfigurations.<name> attribute in the flake.
         if os.path.exists(os.path.join(root_mount_point, "etc/nixos/flake.nix")):
             _offline_host = gs.value("hostname") or "nixos"
-            offline_flake_ref = (
-                os.path.join(root_mount_point, "etc/nixos") + "#" + _offline_host
+            _offline_attr = (
+                os.path.join(root_mount_point, "etc/nixos")
+                + "#nixosConfigurations."
+                + _offline_host
+                + ".config.system.build.toplevel"
             )
+            _offline_build = subprocess.run(
+                [
+                    "pkexec",
+                    "nix",
+                    "build",
+                    "--offline",
+                    "--no-link",
+                    "--print-out-paths",
+                    _offline_attr,
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            if _offline_build.returncode != 0:
+                return (
+                    "Failed to build the flake system offline",
+                    _offline_build.stderr,
+                )
+            offline_system_path = _offline_build.stdout.strip()
     # --- end offline-iso config copy ---

@@ -57,13 +57,12 @@
                 || { echo "ERROR: config-copy anchor missing in main.py"; exit 1; }
               mv "$main.new" "$main"
 
-              # 3. Add --flake to nixos-install when a flake was copied. (No
-              # --offline: nixos-install is a wrapper that rejects unknown
-              # flags. Offline behavior comes from the installer's nix.conf
-              # -- substituters=[] and flake-registry="" -- plus the nixpkgs
-              # input source being present in the ISO store.)
-              sed -i 's|^\([ \t]*\)"nixos-install",|\1"nixos-install",\n\1*(["--flake", offline_flake_ref] if offline_flake_ref else []),|' "$main"
-              grep -q -- '"--flake", offline_flake_ref\]' "$main" \
+              # 3. For a flake install, pass the PRE-BUILT system path via
+              # --system (config-copy.py builds it in the live store first).
+              # Not --flake: that would rebuild in the empty target store,
+              # which fails offline. --system just copies the finished closure.
+              sed -i 's|^\([ \t]*\)"nixos-install",|\1"nixos-install",\n\1*(["--system", offline_system_path] if offline_system_path else []),|' "$main"
+              grep -q -- '"--system", offline_system_path\]' "$main" \
                 || { echo "ERROR: nixos-install anchor missing in main.py"; exit 1; }
 
               # 4. Drop the imperative `users` step from the exec sequence.

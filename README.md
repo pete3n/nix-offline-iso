@@ -123,6 +123,15 @@ indirect-input resolution does not reliably consult the system registry (and we
 disable the global one), and a locked `github:` input can't be resolved from the
 store offline. A `path:` input avoids resolution entirely.
 
+The installer also does **not** run `nixos-install --flake` directly. That
+realizes the system into the empty target store, which offline cannot be
+populated (substituters are disabled), so it rebuilds the toolchain from source
+and fails. Instead the `nixos` module builds the flake's `toplevel` in the
+**live installer store** (where every build input is already present) and hands
+the finished path to `nixos-install --system`, which just copies the closure to
+the target. The Calamares hostname must match a `nixosConfigurations.<name>`
+attribute in the flake.
+
 **Do NOT commit a `configs/flake/flake.lock`** — a github-pinned lock would
 override the path rewrite and reintroduce the offline fetch failure. If you
 generated one during earlier experiments, delete it:
