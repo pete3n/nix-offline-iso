@@ -1,5 +1,5 @@
     # --- offline-iso: copy user-provided configuration into the target ---
-    # Injected by the nix-offline-iso overlay (NOT upstream). This runs after
+    # Injected by the nix-offline-iso overlay. This runs after
     # configuration.nix + hardware-configuration.nix have been generated, but
     # before nixos-install is invoked, so the user's own files are what actually
     # gets installed. A local `import tempfile` keeps this block self-contained,
@@ -80,7 +80,7 @@
         # (substituters are disabled), so it falls back to building the whole
         # toolchain from source and fails fetching sources. Building here, in
         # the live store, succeeds because every build input is already present
-        # on the ISO; `nixos-install --system` then just COPIES the closure to
+        # on the ISO; `nixos-install --system` then just copies the closure to
         # the target. The hostname entered in Calamares must match a
         # nixosConfigurations.<name> attribute in the flake.
         if os.path.exists(os.path.join(root_mount_point, "etc/nixos/flake.nix")):
