@@ -1,107 +1,157 @@
 # NixOS Offline ISO Builder
 
-This repository provides a flake template for creating offline ISO images of the
-NixOS Calamares installer with Gnome.
+Build offline ISO images of the NixOS Calamares installer that install a
+user-provided system configuration with **no network connection**, including
+all of its dependencies in the ISO's Nix store.
 
-It patches over v0.3.19 of the [Calamares NixOS Extensions](https://github.com/NixOS/calamares-nixos-extensions/tree/calamares)
-to disable checking for an online connection, and modifies the Nixos install module
-script to install user provided configuration files.
+Targets **NixOS 26.05** and whatever `calamares-nixos-extensions` that channel
+ships. Two target styles are supported:
 
-# NOTE: main branch is currently broken from upstream changes: https://github.com/NixOS/calamares-nixos-extensions/commit/556b2bd4e848686a3c22f009cbbb4fc0312206f5
+- **channels** — a plain `configuration.nix` (classic, no flake)
+- **flake** — a `flake.nix` installed offline with `nixos-install --flake`
 
-## Use v0.3.14 branch
+## How it works
+
+The installer is the stock NixOS graphical Calamares (GNOME) image, with the
+`calamares-nixos-extensions` package modified through a **robust overlay**
+(`flake.nix`) rather than the old context-diff patches. The overlay:
+
+1. Ships a controlled `calamares/welcome.conf` that drops the `internet`
+   requirement, so the installer runs offline.
+2. Injects a config-copy step into the installer's `nixos` module
+   (`calamares/inject/config-copy.py`) that copies your files from
+   `/tmp/nix-cfg` or `/iso/nix-cfg` into `/etc/nixos`, preserving the
+   freshly generated `hardware-configuration.nix`.
+3. Adds `--flake`/`--offline` to `nixos-install` when the copied config is a
+   flake.
+
+Both injections are anchored on stable comments in the upstream source and are
+guarded: **the build fails loudly if an anchor ever disappears**, instead of
+silently shipping a no-op installer. This is the fix for the recurring breakage
+where an upstream rewrite invalidated the old line-context patches.
+
+The installer is also configured to run nix **fully offline** during install
+(`nix.settings.substituters = [ ]` and `flake-registry = ""`). Without this,
+`nixos-install` reaches out to `cache.nixos.org` (binary-cache probe) and
+`channels.nixos.org` (global flake registry) and fails with no network — which
+is the whole point of the ISO. Consequently the ISO store must be
+self-sufficient: the target's **build dependencies** are baked in (channels via
+`isoImage.includeSystemBuildDependencies`; the flake target via
+`system.includeBuildDependencies`), so the install can rebuild locally after
+`nixos-generate-config` regenerates `hardware-configuration.nix`.
+
+## Layout
+
+```
+flake.nix                     ISO builder + overlay
+calamares/
+  welcome.conf                replaces upstream's (internet requirement removed)
+  inject/config-copy.py       block injected into the installer's nixos module
+configs/
+  channels/                   example channels target (configuration.nix)
+  flake/                      example flake target (flake.nix + configuration.nix)
+```
 
 ## Usage
 
-- [Install](https://nixos.org/download#download-nix) Nix or NixOS to your online build system and [enable flake](https://nixos.wiki/wiki/Flakes) support
-- Clone this repo to a directory where you wish to build your ISO
-- Copy your configuration files to the ./nix-cfg directory
-- You will need to have a hardware-configuration.nix template file in this directory
-  with your configuraiton.nix file
-- The hardware-configuration.nix will be over-written by the installation process,
-  but it is needed to build the configuration for the ISO
-- Include the [build dependencies directive](#build-dependencies) in either your configuration.nix or
-  the ISO's flake.nix
-- Build the ISO with:
+1. [Install Nix](https://nixos.org/download) with flakes enabled on an online
+   build host with plenty of free disk (see below).
+2. Put your system config in either `configs/channels/` or `configs/flake/`.
+   Keep a `hardware-configuration.nix` template there — it is needed to build
+   the ISO closure and is overwritten by the real hardware scan at install time.
+   Keep it vendor-neutral: don't force-load CPU-specific modules
+   (`boot.kernelModules = [ "kvm-intel" ]` etc.). For the channels installer this
+   file is merged into the live installer, and a force-loaded `kvm-intel` makes
+   `systemd-modules-load` fail with "Operation not supported" when the installer
+   runs on a machine/VM without that CPU's virtualization exposed.
+3. For a flake target, the `nixosConfigurations.<name>` attribute must match the
+   hostname you enter in Calamares (the example uses `nixos`).
+4. Build:
 
 ```
-nix build .#iso.offline-installer-x86_64-linux
+# channels target
+nix build .#iso.channels-x86_64-linux
+
+# flake target
+nix build .#iso.flake-x86_64-linux
 ```
 
-- Use dd or other imaging software to write your ISO image to disk
-- Boot your target system from the installation medium and start the install
-  process as normal
-- Ensure you configure the same desktop environment and user as in your configuration
-- The install may take a very long time (and appear stuck on 46%) this is because
-  of the dependencies being copied. Toggle the log to view activity
+5. Write the ISO to disk with `dd` (or image it into a VM — see Testing).
+6. Boot the target, run the installer as normal. Pick options consistent with
+   your config (desktop, user). The install may sit at ~46% for a long time
+   while dependencies copy — toggle the log to see activity.
 
-### Build Dependencies
+### Users and passwords
 
-You must include system build dependencies in one of two ways:
+Your declarative config owns users **and** their passwords. The overlay removes
+Calamares' imperative password step from the install sequence (it ran `usermod`
+in the chroot and failed with exit 6 whenever the GUI username differed from the
+one your config declares). The Calamares users page still appears but its input
+is not used.
 
-1. In your configuration.nix file by declaring -
+So **set a password in your config** — e.g. `users.users.<name>.initialPassword`,
+`hashedPassword`, or `hashedPasswordFile` (and likewise for `root` if you want
+root login). The example configs use `initialPassword = "test"` for `root` and
+`tester`; log in as `tester` / `test`.
+
+### Dynamic configuration
+
+The installer prefers `/tmp/nix-cfg` over the baked-in `/iso/nix-cfg`, so you
+can edit the config after booting the live environment. If your edits add
+dependencies that aren't in the ISO store, the offline install will fail.
+
+## Flake offline support (experimental)
+
+Offline `nixos-install --flake` is the hard part (see
+[nix#8953](https://github.com/NixOS/nix/issues/8953)): evaluation needs every
+flake input available without network, and simply having the input's store path
+present is NOT enough — nix won't resolve a locked `github:` input from the
+store offline.
+
+The `flake-*` target sidesteps this with a **registry pin** instead of a lock:
+
+- `configs/flake/flake.nix` declares `nixpkgs` as an indirect ref (`"nixpkgs"`),
+  not a `github:` URL.
+- The installer pins `nixpkgs` in its system registry to the nixpkgs source
+  baked into the ISO store, so `nixos-install --flake` resolves it to a local
+  path with no network.
+
+**Do NOT commit a `configs/flake/flake.lock` that pins nixpkgs to github** — it
+overrides the registry and reintroduces the offline fetch failure. If you
+generated one during earlier experiments, delete it:
 
 ```
-  system.includeBuildDependencies = true;
+rm -f configs/flake/flake.lock
 ```
 
-This will include all the system dependencies as part of the configuration and
-will allow you to both install from the ISO image and re-build your system
-configuration while offline (provided you don't add any dependencies). For more
-information on this option, see [Linus Heckemann's blog](https://linus.schreibt.jetzt/posts/include-build-dependencies.html)
+The `flake-*` target additionally pulls into the ISO store:
 
-2. In the ISO's flake.nix file by declaring -
+- the target system's built closure (so the build is a store copy, not a
+  rebuild),
+- the flake source tree, and
+- the nixpkgs input source tree (unified via `follows`, so there's only one).
+
+Install then runs with `--offline`. **This path still needs validation on real
+hardware / a VM** — if `--offline` evaluation still reaches for the network on
+your nixpkgs version, the fallback is to vendor the flake inputs as `path:`
+references. Keep `configs/flake/flake.lock` pinned to the same nixpkgs revision
+the ISO builder uses.
+
+## Testing in a VM
 
 ```
-            isoImage = {
-              contents = [
-                {
-                    source = ./nix-cfg;
-                    target = "/nix-cfg";
-                }
-              ];
-              storeContents = [
-                config.system.build.toplevel
-              ];
-              includeSystemBuildDependencies = true;
-            }
+# build, then boot the ISO with no network to prove offline behavior:
+qemu-system-x86_64 -enable-kvm -m 4096 -smp 2 \
+  -drive file=disk.qcow2,if=virtio -boot d \
+  -cdrom result/iso/*.iso \
+  -nic none                       # <- no network; offline install must still work
 ```
 
-If you do not include dependencies in your configuration.nix, then they must
-be declared here so they are included in the nix store for the ISO. However,
-they will not be installed to the system as part of the installation process.
-This will result in a much smaller nix store on your target system, but you will
-not be able to re-build its configuration offline.
+Add `-nic user,hostfwd=tcp::2222-:22` instead of `-nic none` after install to
+SSH into the installed system (the example configs enable SSH; test password is
+`test`).
 
-### Free Disk Space
+### Free disk space
 
-Ensure your nix store partition has enough free space to build the ISO.
-The ISO will be much larger than normal (20+ Gb) depending on what dependencies are included.
-I recommend having at least 3x the ISO size available, or approx. 100+ Gb free.
-
-### Modules
-
-The installation script will recursively copy configuration files from either
-/iso/nix-cfg or /tmp/nix-cfg to /etc/nixos on the target system. This allows
-you to use any number of files and sub-directories for your configuration.
-
-### Dynamic Configuration
-
-- The installer will look for user configuration files in /tmp/nix-cfg prior to
-  searching /iso/nix-cfg. This allows you to dynamically change the system configuration
-  after booting into the installation environment
-- If configuration changes add dependencies, then the install will fail because
-  they will be missing from the ISO's nix store
-
-### Install Options
-
-- You must choose the same Desktop environment as your configuration.nix specifies
-  otherwise the install will fail with missing dependencies
-- You must create the same user as your configuration.nix specifies, otherswise
-  the installer will fail to set the password for your user
-
-## Limitations
-
-Flake configurations are not supported. I have not found a way to make a flake
-based system configuration work completely offline. There are also [open issues](https://github.com/NixOS/nix/issues/8953) related to this problem. If anyone
-has a solution, I would be very interested in seeing it.
+The ISO is large (20+ GB depending on the config). Keep ~3× the ISO size free
+(100+ GB recommended) on the build host's Nix store partition.
