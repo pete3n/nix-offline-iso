@@ -51,21 +51,37 @@ if [ -n "$DISK" ]; then
     exit 1
   fi
   wipefs -a "$DISK"
-  parted -s "$DISK" -- mklabel gpt
-  parted -s "$DISK" -- mkpart ESP fat32 1MiB 513MiB
-  parted -s "$DISK" -- set 1 esp on
-  parted -s "$DISK" -- mkpart root ext4 513MiB 100%
+  parted -s "$DISK" -- \
+    mklabel gpt \
+    mkpart ESP fat32 1MiB 513MiB \
+    set 1 esp on \
+    mkpart root ext4 513MiB 100%
+  partprobe "$DISK" || true
+  udevadm settle || true
   # nvme/mmc devices name partitions p1/p2; sd*/vd* name them 1/2.
   case "$DISK" in
     *[0-9]) part1="${DISK}p1"; part2="${DISK}p2" ;;
     *) part1="${DISK}1"; part2="${DISK}2" ;;
   esac
-  udevadm settle || true
+  # Wait for the partition device nodes to appear before touching them.
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    [ -b "$part1" ] && [ -b "$part2" ] && break
+    udevadm settle || true
+    sleep 1
+  done
+  # Scrub any leftover filesystem signatures inside the NEW partitions. Without
+  # this, a residual FAT signature (e.g. from a previous ESP at this location)
+  # makes `mount`'s blkid autodetection pick the wrong type and fail with
+  # "FAT-fs: Can't find valid FAT filesystem" on the ext4 root.
+  wipefs -a "$part1" "$part2"
   mkfs.fat -F 32 -n boot "$part1"
   mkfs.ext4 -F -L nixos "$part2"
-  mount "$part2" "$ROOT"
+  sync
+  udevadm settle || true
+  # Mount with explicit filesystem types so mount never guesses.
+  mount -t ext4 "$part2" "$ROOT"
   mkdir -p "$ROOT/boot"
-  mount "$part1" "$ROOT/boot"
+  mount -t vfat "$part1" "$ROOT/boot"
 fi
 
 if ! mountpoint -q "$ROOT"; then
