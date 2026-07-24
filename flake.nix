@@ -169,6 +169,8 @@
       mkFlakeInstaller =
         system:
         let
+          pkgs = nixpkgs.legacyPackages.${system};
+
           # Build the flake target WITH its build dependencies included in the
           # toplevel closure (Linus Heckemann's include-build-dependencies
           # technique). Because the offline install disables the binary cache,
@@ -181,6 +183,25 @@
             (target-flake.nixosConfigurations.nixos.extendModules {
               modules = [ { system.includeBuildDependencies = true; } ];
             }).config.system.build.toplevel;
+
+          # The copy of the flake that gets baked onto the ISO and installed to
+          # the target. We rewrite its `nixpkgs` input from the indirect
+          # `"nixpkgs"` to a `path:` pointing at the nixpkgs source already in
+          # the ISO store. A path: input needs NO flake-registry lookup and NO
+          # network — nix locks it locally and evaluates offline. This is the
+          # reliable fix: registry resolution of an indirect input fails during
+          # `nixos-install --flake` (we disable the global registry, and system
+          # registry entries aren't consulted for input locking), and a locked
+          # github: input can't be resolved from the store offline (nix#8953).
+          # The repo's configs/flake/flake.nix stays clean (indirect); only this
+          # baked copy carries the store path. Users repoint it to a normal
+          # github ref after install for online rebuilds (see README).
+          flakeCfgDir = pkgs.runCommand "offline-flake-cfg" { } ''
+            cp -r ${./configs/flake} $out
+            chmod -R u+w $out
+            substituteInPlace $out/flake.nix \
+              --replace-fail 'nixpkgs.url = "nixpkgs";' 'nixpkgs.url = "path:${nixpkgs}";'
+          '';
         in
         nixpkgs.lib.nixosSystem {
           inherit system;
@@ -188,29 +209,13 @@
           modules = [
             { nixpkgs.overlays = [ calamaresOverlay ]; }
             offlineNixModule
-            (
-              { lib, ... }:
-              {
-                # Resolve the copied flake's indirect `nixpkgs` to the source
-                # baked into the ISO store, so `nixos-install --flake` evaluates
-                # OFFLINE (registry -> local path) instead of fetching github.
-                # Workaround for nix#8953: a store path alone isn't enough for
-                # nix to resolve a locked github input offline, but a registry
-                # pin to a path is. mkForce overrides the installation-CD's
-                # channel.nix, which pins nixpkgs to the channel copy (same
-                # revision); we point at ${nixpkgs} to match what the target
-                # was built against, so the install stays a pure store copy.
-                nix.registry.nixpkgs.to = lib.mkForce {
-                  type = "path";
-                  path = "${nixpkgs}";
-                };
-              }
-            )
             "${nixpkgs}/nixos/modules/installer/cd-dvd/installation-cd-graphical-calamares-gnome.nix"
             (isoModule {
-              cfgDir = ./configs/flake;
+              # Bake the path-pinned copy (not ./configs/flake) so the installed
+              # flake resolves nixpkgs from the store offline.
+              cfgDir = flakeCfgDir;
               # target system closure (build is a store copy, not a rebuild) +
-              # flake source + nixpkgs source (for offline flake evaluation).
+              # flake source + nixpkgs source (the path: input target).
               extraStoreContents = [
                 targetToplevel
                 target-flake.outPath

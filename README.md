@@ -108,21 +108,32 @@ flake input available without network, and simply having the input's store path
 present is NOT enough — nix won't resolve a locked `github:` input from the
 store offline.
 
-The `flake-*` target sidesteps this with a **registry pin** instead of a lock:
+The `flake-*` target sidesteps this by pinning `nixpkgs` to a **local store
+path in the flake itself**:
 
-- `configs/flake/flake.nix` declares `nixpkgs` as an indirect ref (`"nixpkgs"`),
-  not a `github:` URL.
-- The installer pins `nixpkgs` in its system registry to the nixpkgs source
-  baked into the ISO store, so `nixos-install --flake` resolves it to a local
-  path with no network.
+- `configs/flake/flake.nix` in the repo stays clean — `nixpkgs` is an indirect
+  ref (`"nixpkgs"`).
+- At ISO-build time the builder bakes a *copy* of the flake whose `nixpkgs`
+  input is rewritten to `path:/nix/store/…-source` (the nixpkgs already in the
+  ISO store). A `path:` input needs no flake registry and no network, so
+  `nixos-install --flake` locks and evaluates it fully offline.
 
-**Do NOT commit a `configs/flake/flake.lock` that pins nixpkgs to github** — it
-overrides the registry and reintroduces the offline fetch failure. If you
+This is deliberately not a registry pin: during `nixos-install --flake`,
+indirect-input resolution does not reliably consult the system registry (and we
+disable the global one), and a locked `github:` input can't be resolved from the
+store offline. A `path:` input avoids resolution entirely.
+
+**Do NOT commit a `configs/flake/flake.lock`** — a github-pinned lock would
+override the path rewrite and reintroduce the offline fetch failure. If you
 generated one during earlier experiments, delete it:
 
 ```
 rm -f configs/flake/flake.lock
 ```
+
+**After install**, the target's `/etc/nixos/flake.nix` will have the store-path
+`nixpkgs` ref. For online rebuilds later, repoint it to a normal channel, e.g.
+`nixpkgs.url = "github:nixos/nixpkgs/nixos-26.05";`, and `nix flake update`.
 
 The `flake-*` target additionally pulls into the ISO store:
 
