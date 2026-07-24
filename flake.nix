@@ -77,6 +77,20 @@
 
             Baked config: /iso/nix-cfg   (override by editing a copy in /tmp/nix-cfg)
           '';
+
+          # Headless access to the LIVE installer. A minimal (console) image has
+          # no GUI, and some VMs (SPICE/quickemu) don't render the framebuffer
+          # console, so allow SSH in to run offline-install. The stock installer
+          # enables sshd but leaves root key-only with no password; set one here.
+          # These credentials are for the throwaway installer environment only.
+          services.openssh.enable = true;
+          services.openssh.settings.PermitRootLogin = lib.mkForce "yes";
+          # `password` (not initialPassword) so it applies regardless of the
+          # installer's users.mutableUsers setting. Installer-only, plaintext.
+          users.users.root.initialHashedPassword = lib.mkForce null;
+          users.users.root.password = "nixos";
+          # For anything but a throwaway VM, prefer a key over the password above:
+          # users.users.root.openssh.authorizedKeys.keys = [ "ssh-ed25519 AAAA... you@host" ];
         };
 
       # Shared ISO image module. `cfgDir` is copied to /iso/nix-cfg; the
@@ -97,7 +111,13 @@
                 }
               ];
               storeContents = [ config.system.build.toplevel ] ++ extraStoreContents;
-              includeSystemBuildDependencies = true;
+              # NOT set (prototype): this would bake the *installer's* own
+              # build/derivation closure. The offline install only needs the
+              # TARGET's build deps, which we bake explicitly via the target's
+              # `.drvPath` in extraStoreContents; the installer is never rebuilt.
+              # Dropping it avoids shipping the installer's build closure.
+              # (Verify offline install still succeeds before relying on this.)
+              includeSystemBuildDependencies = false;
               squashfsCompression = "gzip -Xcompression-level 1";
             };
           }
