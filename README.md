@@ -10,6 +10,37 @@ Two install types are supported:
 - **channels** — a plain `configuration.nix` (tracks a NixOS channel, no flake)
 - **flake** — a `flake.nix` (installed offline; see [Flake offline support](#flake-offline-support))
 
+## Usage
+
+1. [Install Nix](https://nixos.org/download) with flakes enabled on an online
+   build host with plenty of free disk (see below).
+2. Put your system config in either `configs/channels/` or `configs/flake/`.
+   Keep the provided `hardware-configuration.nix` template. It is needed to build 
+   the ISO closure and is overwritten by the real hardware scan at install time. 
+   If there are significant differences between the target hardware and the 
+   `hardware-configuration.nix` template, then you may need to replace the template 
+   config with the generated one so that the ISO includes necessary dependencies. 
+3. For a flake target, the `nixosConfigurations.<name>` attribute must match the
+   hostname you enter in Calamares (the example uses `nixos`).
+4. Build:
+
+```
+# channels target
+nix build .#iso.channels-x86_64-linux
+
+# flake target
+nix build .#iso.flake-x86_64-linux
+```
+
+5. Write the ISO to disk with `dd` or equivalent tool.
+6. Boot the target and run the installer. Partition the target disk **partitioning** in 
+   Calamares installer. The disk configuration will be used. Most other GUI choices 
+   (locale, desktop, extra packages, the user) will be overwritten by the provided 
+   `configuration.nix`, so just click through them. For a **flake** target, set the 
+   **hostname** to match your `nixosConfigurations.<name>`. The install may appear 
+   to sit for a long time while it copies and rebuilds from the store. 
+   Toggle the log to see activity.
+
 ## How it works
 
 The installer is the stock NixOS graphical Calamares (GNOME) image, with the
@@ -50,37 +81,6 @@ configs/
   channels/                   example channels target (configuration.nix)
   flake/                      example flake target (flake.nix + configuration.nix)
 ```
-
-## Usage
-
-1. [Install Nix](https://nixos.org/download) with flakes enabled on an online
-   build host with plenty of free disk (see below).
-2. Put your system config in either `configs/channels/` or `configs/flake/`.
-   Keep the provided `hardware-configuration.nix` template. It is needed to build 
-   the ISO closure and is overwritten by the real hardware scan at install time. 
-   If there are significant differences between the target hardware and the 
-   `hardware-configuration.nix` template, then you may need to replace the template 
-   config with the generated one so that the ISO includes necessary dependencies. 
-3. For a flake target, the `nixosConfigurations.<name>` attribute must match the
-   hostname you enter in Calamares (the example uses `nixos`).
-4. Build:
-
-```
-# channels target
-nix build .#iso.channels-x86_64-linux
-
-# flake target
-nix build .#iso.flake-x86_64-linux
-```
-
-5. Write the ISO to disk with `dd` or equivalent tool.
-6. Boot the target and run the installer. Partition the target disk **partitioning** in 
-   Calamares installer. The disk configuration will be used. Most other GUI choices 
-   (locale, desktop, extra packages, the user) will be overwritten by the provided 
-   `configuration.nix`, so just click through them. For a **flake** target, set the 
-   **hostname** to match your `nixosConfigurations.<name>`. The install may appear 
-   to sit for a long time while it copies and rebuilds from the store. 
-   Toggle the log to see activity.
 
 ### Users and passwords
 
