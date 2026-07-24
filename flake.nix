@@ -1,11 +1,11 @@
 {
-  description = "NixOS offline ISO builder (channels + flake targets)";
+  description = "NixOS offline ISO builder — minimal CLI installer (channels + flake targets)";
 
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixos-26.05";
 
-    # Example flake target which is included as an input so its system closure
-		# and input source trees can be pulled for offline install.
+    # Example flake target, included as an input so its system closure and input
+    # source trees can be pulled into the ISO store for offline install.
     target-flake = {
       url = "path:./configs/flake";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -26,59 +26,12 @@
       ];
       forAllSystems = nixpkgs.lib.genAttrs systems;
 
-      calamaresOverlay = final: prev: {
-        calamares-nixos-extensions = prev.calamares-nixos-extensions.overrideAttrs (old: {
-          postInstall =
-            (old.postInstall or "")
-            + ''
-              # 1. Disable the online check.
-              cp ${./calamares/welcome.conf} $out/etc/calamares/modules/welcome.conf
-
-              main=$out/lib/calamares/modules/nixos/main.py
-
-              # 2. Inject the user-config copy + flake detection.
-              awk 'FNR==NR { block = block $0 ORS; next }
-                   /# build nixos-install command/ && !done { printf "%s", block; done = 1 }
-                   { print }' \
-                ${./calamares/inject/config-copy.py} "$main" > "$main.new"
-              grep -q "offline-iso: copy user-provided configuration" "$main.new" \
-                || { echo "ERROR: config-copy anchor missing in main.py"; exit 1; }
-              mv "$main.new" "$main"
-
-              # 3. For a flake install, pass the PRE-BUILT system path via
-              # --system (config-copy.py builds it in the live store first).
-              sed -i 's|^\([ \t]*\)"nixos-install",|\1"nixos-install",\n\1*(["--system", offline_system_path] if offline_system_path else []),|' "$main"
-              grep -q -- '"--system", offline_system_path\]' "$main" \
-                || { echo "ERROR: nixos-install anchor missing in main.py"; exit 1; }
-
-              # 4. Remove the user configuraiton step from the Calamares install process.
-              # The user provided config sets users and passwords.
-							settings=$out/etc/calamares/settings.conf
-              awk '
-                /^- exec:/ { in_exec = 1 }
-                /^- show:/ { in_exec = 0 }
-                in_exec && /^[[:space:]]*-[[:space:]]*users[[:space:]]*$/ { next }
-                { print }
-              ' "$settings" > "$settings.new"
-              # Guard: exactly one `- users` (the show page) must remain. If the
-              # count is wrong the sequence changed upstream — fail loudly.
-              [ "$(grep -cE '^[[:space:]]*-[[:space:]]*users[[:space:]]*$' "$settings.new")" = 1 ] \
-                || { echo "ERROR: unexpected 'users' count in settings.conf exec sequence"; exit 1; }
-              mv "$settings.new" "$settings"
-            '';
-        });
-      };
-
-      # Force the installer's nix to run offline. Without this, the
-      # nixos-install pipeline reaches out to:
-      #   - cache.nixos.org/nix-cache-info      (binary-cache substituter probe)
-      #   - channels.nixos.org/flake-registry.json (global flake registry)
+      # Force the installer's nix to run offline (no cache.nixos.org probe, no
+      # global flake-registry fetch), and enable flakes for the flake install.
       offlineNixModule =
         { lib, ... }:
         {
           nix.settings = {
-            # Required so `nixos-install --flake` works. 
-						# The channels installer inherits this from the merged target config. 
             experimental-features = [
               "nix-command"
               "flakes"
@@ -90,8 +43,44 @@
           };
         };
 
+      # The CLI installer: the offline-install script + a login hint. Unlike the
+      # graphical (Calamares) variant, there is no GUI — the user runs
+      # `offline-install` from the console.
+      offlineInstaller =
+        pkgs:
+        pkgs.writeShellApplication {
+          name = "offline-install";
+          runtimeInputs = [
+            pkgs.coreutils
+            pkgs.util-linux
+            pkgs.parted
+            pkgs.dosfstools
+            pkgs.e2fsprogs
+            pkgs.nixos-install-tools
+            pkgs.nix
+          ];
+          text = builtins.readFile ./cli/offline-install.sh;
+        };
+
+      installerModule =
+        { pkgs, lib, ... }:
+        {
+          environment.systemPackages = [ (offlineInstaller pkgs) ];
+          # Shown at the console login of the live installer.
+          users.motd = lib.mkForce ''
+
+            NixOS offline installer (CLI)
+
+              1. Partition and mount your target at /mnt
+                 (or let the installer do one disk: offline-install --disk /dev/sdX)
+              2. sudo offline-install
+
+            Baked config: /iso/nix-cfg   (override by editing a copy in /tmp/nix-cfg)
+          '';
+        };
+
       # Shared ISO image module. `cfgDir` is copied to /iso/nix-cfg; the
-      # installer copies it into /etc/nixos at install time.
+      # offline-install script copies it into /etc/nixos at install time.
       isoModule =
         {
           cfgDir,
@@ -114,48 +103,61 @@
           }
         );
 
-      # NixOS channel configuration installer. The target configuration.nix is merged into
-      # the installer system itself so `system.build.toplevel` contains the target's full closure.
-			mkChannelsInstaller =
+      # Minimal (console-only) installer base — no desktop, no Calamares.
+      baseInstaller = "${nixpkgs}/nixos/modules/installer/cd-dvd/installation-cd-minimal.nix";
+
+      # Channels installer. The target is built SEPARATELY (not merged into the
+      # installer, which would risk config conflicts with the minimal CD) and its
+      # closure + derivation closure are baked into the ISO store so the install
+      # can rebuild the hardware-config diff offline. `<nixpkgs>` on the installer
+      # resolves to this same nixpkgs (flake setNixPath), so the pre-baked build
+      # and the install-time build match.
+      mkChannelsInstaller =
         system:
+        let
+          channelsToplevel =
+            (nixpkgs.lib.nixosSystem {
+              inherit system;
+              modules = [
+                ./configs/channels/configuration.nix
+                { system.includeBuildDependencies = true; }
+              ];
+            }).config.system.build.toplevel;
+        in
         nixpkgs.lib.nixosSystem {
           inherit system;
           specialArgs = { inherit inputs; };
           modules = [
-            { nixpkgs.overlays = [ calamaresOverlay ]; }
             offlineNixModule
-            "${nixpkgs}/nixos/modules/installer/cd-dvd/installation-cd-graphical-calamares-gnome.nix"
-            ./configs/channels/configuration.nix
+            installerModule
+            baseInstaller
             (isoModule {
               cfgDir = ./configs/channels;
-              extraStoreContents = [ ];
+              extraStoreContents = [
+                channelsToplevel
+                channelsToplevel.drvPath
+                nixpkgs.outPath
+              ];
             })
           ];
         };
 
-      # NixOS flake configuration installer. Pull the built toplevel + input source
-      # trees into the ISO store. The source trees (flake + nixpkgs) are what an
-      # offline `nixos-install --flake ... --offline` needs to evaluate.
+      # Flake installer. Bakes a path-pinned copy of the flake (nixpkgs rewritten
+      # to a store path + a matching complete lock) so it evaluates offline, plus
+      # the target's built + derivation closures.
       mkFlakeInstaller =
         system:
         let
           pkgs = nixpkgs.legacyPackages.${system};
 
-          # Build the flake target WITH its build dependencies included in the
-          # toplevel closure (Linus Heckemann's include-build-dependencies
-          # technique). Because the offline install disables the binary cache,
-          # the store must be able to re-build the target after
-          # nixos-generate-config regenerates hardware-configuration.nix, which
-          # makes the installed system differ slightly from the pre-baked one.
-          # The channel's target gets this via isoImage.includeSystemBuildDependencies;
-          # for the external flake it gets injected with extendModules.
           targetToplevel =
             (target-flake.nixosConfigurations.nixos.extendModules {
               modules = [ { system.includeBuildDependencies = true; } ];
             }).config.system.build.toplevel;
 
-          # A pre-computed flake.lock that pins the copied flake's `nixpkgs`
-          # input to the nixpkgs source path in the ISO store.
+          # Complete flake.lock pinning the copied flake's `nixpkgs` to the store
+          # path, so nix resolves nothing and never rewrites the lock (which for a
+          # path: flake would mutate the dir mid-eval and cause a NAR mismatch).
           targetLock = builtins.toJSON {
             version = 7;
             root = "root";
@@ -186,7 +188,6 @@
             substituteInPlace $out/flake.nix \
               --replace-fail 'nixpkgs.url = "nixpkgs";' 'nixpkgs.url = "path:${nixpkgs}";'
             cp ${pkgs.writeText "flake.lock" targetLock} $out/flake.lock
-            # Keep it writable in case nix ever wants to touch it on the target.
             chmod u+w $out/flake.lock
           '';
         in
@@ -194,25 +195,14 @@
           inherit system;
           specialArgs = { inherit inputs; };
           modules = [
-            { nixpkgs.overlays = [ calamaresOverlay ]; }
             offlineNixModule
-            "${nixpkgs}/nixos/modules/installer/cd-dvd/installation-cd-graphical-calamares-gnome.nix"
+            installerModule
+            baseInstaller
             (isoModule {
-              # Bake the path-pinned copy (not ./configs/flake) so the installed
-              # flake resolves nixpkgs from the store offline.
               cfgDir = flakeCfgDir;
               extraStoreContents = [
-                # Built target system (runtime closure).
-								# Unchanged parts are a store copy.
                 targetToplevel
-                # The target's derivation closure: .drvs + source tarballs, so
-                # the parts that differ from the pre-baked build (because
-                # nixos-generate-config regenerates hardware-configuration.nix)
-                # can be rebuilt offline from source. This is what
-                # `isoImage.includeSystemBuildDependencies` bakes for the
-                # channels target; without it, offline rebuild fails for flakes.
                 targetToplevel.drvPath
-                # nixpkgs source path for the copied flake.
                 nixpkgs.outPath
               ];
             })
