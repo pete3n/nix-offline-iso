@@ -4,10 +4,8 @@
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixos-26.05";
 
-    # The example flake target is consumed as an input so we can (a) pull its
-    # built system closure into the ISO store and (b) pull its input SOURCE
-    # trees in too, which is what a later offline `nixos-install --flake` needs
-    # to evaluate. `follows` unifies nixpkgs so there is only one copy.
+    # Example flake target which is included as an input so its system closure
+		# and input source trees can be pulled for offline install.
     target-flake = {
       url = "path:./configs/flake";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -28,16 +26,6 @@
       ];
       forAllSystems = nixpkgs.lib.genAttrs systems;
 
-      # --- Robust overlay ------------------------------------------------------
-      # Re-seats the two offline-install changes on stable seams instead of the
-      # old context-diff patches (which broke on every upstream rewrite):
-      #   1. welcome.conf shipped wholesale (drops the `internet` requirement).
-      #   2. main.py transformed with anchored awk/sed inserts:
-      #      - user-config copy injected before `# build nixos-install command`,
-      #      - `--flake`/`--offline` args added to the nixos-install list when a
-      #        flake was copied to the target.
-      # Each transform has a grep guard that FAILS the build if its anchor ever
-      # disappears, so an upstream change can never silently ship a no-op.
       calamaresOverlay = final: prev: {
         calamares-nixos-extensions = prev.calamares-nixos-extensions.overrideAttrs (old: {
           postInstall =
@@ -59,20 +47,13 @@
 
               # 3. For a flake install, pass the PRE-BUILT system path via
               # --system (config-copy.py builds it in the live store first).
-              # Not --flake: that would rebuild in the empty target store,
-              # which fails offline. --system just copies the finished closure.
               sed -i 's|^\([ \t]*\)"nixos-install",|\1"nixos-install",\n\1*(["--system", offline_system_path] if offline_system_path else []),|' "$main"
               grep -q -- '"--system", offline_system_path\]' "$main" \
                 || { echo "ERROR: nixos-install anchor missing in main.py"; exit 1; }
 
-              # 4. Drop the imperative `users` step from the exec sequence.
-              # The user's declarative config owns users AND passwords
-              # (initialPassword / hashedPassword), so Calamares' post-install
-              # `usermod` password step is redundant — and it FAILS (usermod
-              # exit 6, "user does not exist") whenever the GUI username differs
-              # from the one your config declares. Remove it from `exec` only;
-              # the users PAGE stays in `show` (its job simply isn't enqueued).
-              settings=$out/etc/calamares/settings.conf
+              # 4. Remove the user configuraiton step from the Calamares install process.
+              # The user provided config sets users and passwords.
+							settings=$out/etc/calamares/settings.conf
               awk '
                 /^- exec:/ { in_exec = 1 }
                 /^- show:/ { in_exec = 0 }
@@ -88,23 +69,16 @@
         });
       };
 
-      # Force the installer's nix to run FULLY OFFLINE. Without this, the
+      # Force the installer's nix to run offline. Without this, the
       # nixos-install pipeline reaches out to:
       #   - cache.nixos.org/nix-cache-info      (binary-cache substituter probe)
       #   - channels.nixos.org/flake-registry.json (global flake registry)
-      # and fails the moment there is no network — which is the entire point of
-      # this ISO. Baked into the installer environment so every nix invocation
-      # nixos-install makes inherits it.
       offlineNixModule =
         { lib, ... }:
         {
           nix.settings = {
-            # Required so `nixos-install --flake` works AND so the
-            # `flake-registry` setting below is accepted (nix rejects it, and
-            # thus fails nix.conf validation at build time, unless `flakes` is
-            # enabled). The channels installer inherits this from the merged
-            # target config; the flake installer merges no config, so set it
-            # here for both.
+            # Required so `nixos-install --flake` works. 
+						# The channels installer inherits this from the merged target config. 
             experimental-features = [
               "nix-command"
               "flakes"
@@ -140,11 +114,9 @@
           }
         );
 
-      # A channels-style installer. The target configuration.nix is merged into
-      # the installer system itself so `system.build.toplevel` (and thus the ISO
-      # store) contains the target's full closure — the mechanism that makes the
-      # offline install work.
-      mkChannelsInstaller =
+      # NixOS channel configuration installer. The target configuration.nix is merged into
+      # the installer system itself so `system.build.toplevel` contains the target's full closure.
+			mkChannelsInstaller =
         system:
         nixpkgs.lib.nixosSystem {
           inherit system;
@@ -161,8 +133,7 @@
           ];
         };
 
-      # A flake-style installer. Here the target system is a SEPARATE flake, so
-      # instead of merging it we pull its built toplevel + its input source
+      # NixOS flake configuration installer. Pull the built toplevel + input source
       # trees into the ISO store. The source trees (flake + nixpkgs) are what an
       # offline `nixos-install --flake ... --offline` needs to evaluate.
       mkFlakeInstaller =
@@ -173,26 +144,18 @@
           # Build the flake target WITH its build dependencies included in the
           # toplevel closure (Linus Heckemann's include-build-dependencies
           # technique). Because the offline install disables the binary cache,
-          # the store must be able to (re)build the target — e.g. after
+          # the store must be able to re-build the target after
           # nixos-generate-config regenerates hardware-configuration.nix, which
           # makes the installed system differ slightly from the pre-baked one.
-          # The channels target gets this via isoImage.includeSystemBuildDependencies;
-          # for the external flake we inject it with extendModules.
+          # The channel's target gets this via isoImage.includeSystemBuildDependencies;
+          # for the external flake it gets injected with extendModules.
           targetToplevel =
             (target-flake.nixosConfigurations.nixos.extendModules {
               modules = [ { system.includeBuildDependencies = true; } ];
             }).config.system.build.toplevel;
 
           # A pre-computed flake.lock that pins the copied flake's `nixpkgs`
-          # input to the nixpkgs source path in the ISO store. Baking a COMPLETE
-          # lock is essential: with no lock, `nixos-install --flake` auto-writes
-          # one into the flake dir, and for a path: flake that write mutates the
-          # dir mid-evaluation, so the flake's own NAR hash no longer matches
-          # what nix just computed ("NAR hash mismatch in input path:/…/etc/nixos").
-          # A complete matching lock means nix resolves nothing and writes
-          # nothing. `original` matches the `path:` url in the rewritten
-          # flake.nix, so nix never tries to re-resolve via the (unavailable
-          # offline) registry.
+          # input to the nixpkgs source path in the ISO store.
           targetLock = builtins.toJSON {
             version = 7;
             root = "root";
@@ -217,18 +180,6 @@
             };
           };
 
-          # The copy of the flake that gets baked onto the ISO and installed to
-          # the target. We rewrite its `nixpkgs` input from the indirect
-          # `"nixpkgs"` to a `path:` pointing at the nixpkgs source already in
-          # the ISO store, and ship the matching lock above. A path: input needs
-          # NO flake-registry lookup and NO network — nix evaluates it offline.
-          # This is the reliable fix: registry resolution of an indirect input
-          # fails during `nixos-install --flake` (we disable the global
-          # registry, and system registry entries aren't consulted for input
-          # locking), and a locked github: input can't be resolved from the
-          # store offline (nix#8953). The repo's configs/flake/flake.nix stays
-          # clean (indirect); only this baked copy carries the store path. Users
-          # repoint it to a github ref after install for online rebuilds (README).
           flakeCfgDir = pkgs.runCommand "offline-flake-cfg" { } ''
             cp -r ${./configs/flake} $out
             chmod -R u+w $out
@@ -251,18 +202,17 @@
               # flake resolves nixpkgs from the store offline.
               cfgDir = flakeCfgDir;
               extraStoreContents = [
-                # Built target system (runtime closure) — unchanged parts are a
-                # store copy, not a rebuild.
+                # Built target system (runtime closure).
+								# Unchanged parts are a store copy.
                 targetToplevel
-                # The target's DERIVATION closure: .drvs + source tarballs, so
+                # The target's derivation closure: .drvs + source tarballs, so
                 # the parts that differ from the pre-baked build (because
                 # nixos-generate-config regenerates hardware-configuration.nix)
-                # can be rebuilt OFFLINE from source. This is the exact thing
+                # can be rebuilt offline from source. This is what
                 # `isoImage.includeSystemBuildDependencies` bakes for the
-                # channels target; without it, offline rebuild fails fetching
-                # e.g. bash-5.3.tar.gz.
+                # channels target; without it, offline rebuild fails for flakes.
                 targetToplevel.drvPath
-                # nixpkgs source — the path: input the copied flake evaluates.
+                # nixpkgs source path for the copied flake.
                 nixpkgs.outPath
               ];
             })
