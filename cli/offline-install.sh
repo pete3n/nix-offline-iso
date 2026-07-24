@@ -78,10 +78,14 @@ if [ -n "$DISK" ]; then
   mkfs.ext4 -F -L nixos "$part2"
   sync
   udevadm settle || true
-  # Mount with explicit filesystem types so mount never guesses.
+  # Mount with explicit filesystem types so mount never guesses. Mount the ESP
+  # with umask=0077 so it is NOT world-readable: systemd-boot stores a random
+  # seed there and warns ("world accessible ... security hole") otherwise. This
+  # also runs before nixos-generate-config, so the generated /boot filesystem
+  # inherits the secure options.
   mount -t ext4 "$part2" "$ROOT"
   mkdir -p "$ROOT/boot"
-  mount -t vfat "$part1" "$ROOT/boot"
+  mount -t vfat -o umask=0077 "$part1" "$ROOT/boot"
 fi
 
 if ! mountpoint -q "$ROOT"; then
