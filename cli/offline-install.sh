@@ -132,7 +132,9 @@ if [ -e "$ROOT/etc/nixos/flake.nix" ]; then
     "$ROOT/etc/nixos#nixosConfigurations.$HOST.config.system.build.toplevel")"
 else
   echo ">> Channels install: building the system in the live store"
-  top="$(nix-build --offline --no-out-link \
+  # Classic nix-build has no --offline flag (that's a `nix` CLI option); it
+  # isn't needed anyway since the installer's nix.conf disables substituters.
+  top="$(nix-build --no-out-link \
     '<nixpkgs/nixos>' -A system \
     -I "nixos-config=$ROOT/etc/nixos/configuration.nix")"
 fi
