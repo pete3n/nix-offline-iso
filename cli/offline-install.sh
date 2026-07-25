@@ -1,12 +1,5 @@
 # offline-install — minimal CLI offline NixOS installer (nix-offline-iso).
 #
-# This is the BODY of a writeShellApplication wrapper (see flake.nix): the
-# wrapper supplies the shebang, `set -euo pipefail`, and the PATH (runtimeInputs),
-# so this file has neither. It reproduces, in shell, what the graphical
-# (Calamares) variant's config-copy step does: copy the baked/edited config into
-# the target, preserve the freshly generated hardware-configuration.nix, build
-# the system in the LIVE installer store, and install it with `nixos-install
-# --system` — all fully offline.
 
 ROOT=/mnt
 DISK=""
@@ -40,36 +33,39 @@ if [ "$(id -u)" -ne 0 ]; then
   exit 1
 fi
 
-# --- optional single-disk auto-partition ------------------------------------
 if [ -n "$DISK" ]; then
   echo ">> This will ERASE all data on $DISK and create:"
-  echo "     GPT  ->  512MiB ESP (FAT32, /boot)  +  ext4 root (rest)"
+  echo "     GPT  ->  1024MiB ESP (FAT32, /boot)  +  ext4 root (rest)"
   printf 'Type YES to continue: '
   read -r confirm
   if [ "$confirm" != "YES" ]; then
     echo "aborted"
     exit 1
   fi
-  wipefs -a "$DISK"
+ 
+	wipefs -a "$DISK"
   parted -s "$DISK" -- \
     mklabel gpt \
-    mkpart ESP fat32 1MiB 513MiB \
+    mkpart ESP fat32 1MiB 1023MiB \
     set 1 esp on \
-    mkpart root ext4 513MiB 100%
+    mkpart root ext4 1023MiB 100%
   partprobe "$DISK" || true
   udevadm settle || true
-  # nvme/mmc devices name partitions p1/p2; sd*/vd* name them 1/2.
+ 
+	# nvme/mmc devices name partitions p1/p2; sd*/vd* name them 1/2.
   case "$DISK" in
     *[0-9]) part1="${DISK}p1"; part2="${DISK}p2" ;;
     *) part1="${DISK}1"; part2="${DISK}2" ;;
   esac
-  # Wait for the partition device nodes to appear before touching them.
+ 
+	# Wait for the partition device nodes to appear before touching them.
   for _ in 1 2 3 4 5 6 7 8 9 10; do
     [ -b "$part1" ] && [ -b "$part2" ] && break
     udevadm settle || true
     sleep 1
   done
-  # Scrub any leftover filesystem signatures inside the NEW partitions. Without
+  
+	# Scrub any leftover filesystem signatures inside the new partitions. Without
   # this, a residual FAT signature (e.g. from a previous ESP at this location)
   # makes `mount`'s blkid autodetection pick the wrong type and fail with
   # "FAT-fs: Can't find valid FAT filesystem" on the ext4 root.
@@ -78,12 +74,11 @@ if [ -n "$DISK" ]; then
   mkfs.ext4 -F -L nixos "$part2"
   sync
   udevadm settle || true
-  # Mount with explicit filesystem types so mount never guesses. Mount the ESP
+  
+	# Mount with explicit filesystem types so mount never guesses. Mount the ESP
   # with umask=0077 (owner-only) so the random seed isn't world-readable in the
-  # window before nixos-install remounts it per the generated config. (The
-  # authoritative fix is tightening the mask in hardware-configuration.nix
-  # below, since nixos-install remounts /boot per that config.)
-  mount -t ext4 "$part2" "$ROOT"
+  # window before nixos-install remounts it per the generated config.  
+	mount -t ext4 "$part2" "$ROOT"
   mkdir -p "$ROOT/boot"
   mount -t vfat -o umask=0077 "$part1" "$ROOT/boot"
 fi
@@ -94,7 +89,6 @@ if ! mountpoint -q "$ROOT"; then
   exit 1
 fi
 
-# --- choose the config source -----------------------------------------------
 # /tmp/nix-cfg (edited after boot) wins over the baked-in /iso/nix-cfg.
 src=/tmp/nix-cfg
 if [ ! -e "$src/configuration.nix" ] && [ ! -e "$src/flake.nix" ]; then
@@ -106,15 +100,10 @@ if [ ! -e "$src/configuration.nix" ] && [ ! -e "$src/flake.nix" ]; then
 fi
 echo ">> Using configuration from $src"
 
-# --- generate hardware config, then overlay the user's config ---------------
 nixos-generate-config --root "$ROOT"
 hw="$ROOT/etc/nixos/hardware-configuration.nix"
 # NixOS 26.05's nixos-generate-config records the ESP with fmask=0022 dmask=0022
-# (files 0644 — world-readable), which trips systemd-boot's random-seed warning
-# ("/boot ... world accessible ... security hole") and leaves it insecure on the
-# installed system. Tighten the boot-partition mask so the seed isn't readable
-# by non-root. nixos-install remounts /boot per this config, so this is the
-# authoritative fix (the mount option in the auto-partition step is not enough).
+# (files 0644 — world-readable), which trips systemd-boot's random-seed warning.
 sed -i 's/\(fmask\|dmask\|umask\)=0022/\1=0077/g' "$hw"
 hw_saved="$(mktemp)"
 cp "$hw" "$hw_saved"
@@ -123,7 +112,6 @@ chmod -R u+w "$ROOT/etc/nixos"
 cp -f "$hw_saved" "$hw"
 rm -f "$hw_saved"
 
-# --- build in the LIVE store, then install the finished path with --system ---
 # Building here (not via `nixos-install --flake`/chroot) keeps the build in the
 # store that actually has the inputs; `--system` then just copies the closure.
 if [ -e "$ROOT/etc/nixos/flake.nix" ]; then
@@ -132,8 +120,6 @@ if [ -e "$ROOT/etc/nixos/flake.nix" ]; then
     "$ROOT/etc/nixos#nixosConfigurations.$HOST.config.system.build.toplevel")"
 else
   echo ">> Channels install: building the system in the live store"
-  # Classic nix-build has no --offline flag (that's a `nix` CLI option); it
-  # isn't needed anyway since the installer's nix.conf disables substituters.
   top="$(nix-build --no-out-link \
     '<nixpkgs/nixos>' -A system \
     -I "nixos-config=$ROOT/etc/nixos/configuration.nix")"

@@ -40,7 +40,7 @@ nix build .#iso.flake-x86_64-linux
 5. Write the ISO to disk with `dd` or an equivalent tool.
 6. Boot the target. At the console:
    - Partition and mount your target at `/mnt` yourself, **or** let the installer
-     do a single disk: `offline-install --disk /dev/sdX` (GPT: 512 MiB ESP + ext4
+     do a single disk: `offline-install --disk /dev/sdX` (GPT: 1024 MiB ESP + ext4
      root — **erases the disk**).
    - Run `sudo offline-install`.
    - For a **flake** target, pass `--host NAME` if your

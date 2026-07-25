@@ -43,9 +43,7 @@
           };
         };
 
-      # The CLI installer: the offline-install script + a login hint. Unlike the
-      # graphical (Calamares) variant, there is no GUI — the user runs
-      # `offline-install` from the console.
+      # The CLI installer: the offline-install script + a login hint.
       offlineInstaller =
         pkgs:
         pkgs.writeShellApplication {
@@ -89,7 +87,6 @@
           # installer's users.mutableUsers setting. Installer-only, plaintext.
           users.users.root.initialHashedPassword = lib.mkForce null;
           users.users.root.password = "nixos";
-          # For anything but a throwaway VM, prefer a key over the password above:
           # users.users.root.openssh.authorizedKeys.keys = [ "ssh-ed25519 AAAA... you@host" ];
         };
 
@@ -111,14 +108,6 @@
                 }
               ];
               storeContents = [ config.system.build.toplevel ] ++ extraStoreContents;
-              # Left false on purpose: this would bake the *installer's* own
-              # build/derivation closure, which the install never needs (the
-              # installer is not rebuilt). The offline install only needs the
-              # TARGET's build deps, baked explicitly via the target's `.drvPath`
-              # in extraStoreContents. Dropping it trims the installer's build
-              # closure (notably the whole toolchain-source set) from the ISO.
-              # Verified: channels + flake offline installs both succeed with
-              # this off.
               includeSystemBuildDependencies = false;
               squashfsCompression = "gzip -Xcompression-level 1";
             };
@@ -128,12 +117,9 @@
       # Minimal (console-only) installer base — no desktop, no Calamares.
       baseInstaller = "${nixpkgs}/nixos/modules/installer/cd-dvd/installation-cd-minimal.nix";
 
-      # Channels installer. The target is built SEPARATELY (not merged into the
-      # installer, which would risk config conflicts with the minimal CD) and its
+      # Channels installer. The target is built separately and its
       # closure + derivation closure are baked into the ISO store so the install
-      # can rebuild the hardware-config diff offline. `<nixpkgs>` on the installer
-      # resolves to this same nixpkgs (flake setNixPath), so the pre-baked build
-      # and the install-time build match.
+      # can rebuild the hardware-config diff offline.
       mkChannelsInstaller =
         system:
         let
@@ -178,8 +164,6 @@
             }).config.system.build.toplevel;
 
           # Complete flake.lock pinning the copied flake's `nixpkgs` to the store
-          # path, so nix resolves nothing and never rewrites the lock (which for a
-          # path: flake would mutate the dir mid-eval and cause a NAR mismatch).
           targetLock = builtins.toJSON {
             version = 7;
             root = "root";
