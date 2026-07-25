@@ -111,12 +111,14 @@
                 }
               ];
               storeContents = [ config.system.build.toplevel ] ++ extraStoreContents;
-              # NOT set (prototype): this would bake the *installer's* own
-              # build/derivation closure. The offline install only needs the
-              # TARGET's build deps, which we bake explicitly via the target's
-              # `.drvPath` in extraStoreContents; the installer is never rebuilt.
-              # Dropping it avoids shipping the installer's build closure.
-              # (Verify offline install still succeeds before relying on this.)
+              # Left false on purpose: this would bake the *installer's* own
+              # build/derivation closure, which the install never needs (the
+              # installer is not rebuilt). The offline install only needs the
+              # TARGET's build deps, baked explicitly via the target's `.drvPath`
+              # in extraStoreContents. Dropping it trims the installer's build
+              # closure (notably the whole toolchain-source set) from the ISO.
+              # Verified: channels + flake offline installs both succeed with
+              # this off.
               includeSystemBuildDependencies = false;
               squashfsCompression = "gzip -Xcompression-level 1";
             };
