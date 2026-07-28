@@ -7,7 +7,7 @@
   };
 
   outputs =
-    { self, nixpkgs, ... }:
+    { nixpkgs, ... }:
     {
       # The offline installer auto-selects this attribute: it uses the sole
       # nixosConfigurations entry if there is exactly one, otherwise it looks

@@ -1,7 +1,3 @@
-# Example TARGET system config — flake style (imported by ./flake.nix).
-#
-# Identical intent to the channels example, but consumed through a flake so we
-# can exercise offline `nixos-install --flake`. Kept minimal; SSH enabled.
 { config, pkgs, ... }:
 
 {
