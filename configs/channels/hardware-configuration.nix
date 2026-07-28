@@ -7,7 +7,6 @@
 
 # Nothing here needs to match your hardware provided all dependencies are baked
 # into the ISO closure.
-#
 { config, lib, pkgs, modulesPath, ... }:
 
 {
