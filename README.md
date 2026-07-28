@@ -5,14 +5,14 @@ include a user-provided system configuration that can be installed with **no
 network connection**, by including all of its dependencies in the ISO's Nix
 store.
 
-This is the CLI variant — there is no graphical installer; you install from a
+This is the CLI variant. There is no graphical installer; you install from a
 console with the `offline-install` script. (The graphical Calamares variant
 lives on the `nixos-26.05-graphical` branch.)
 
 Targets **NixOS 26.05**. Two install types are supported:
 
-- **channels** — a plain `configuration.nix` (tracks a NixOS channel, no flake)
-- **flake** — a `flake.nix` (installed offline; see [Flake offline support](#flake-offline-support))
+- **channels** - a plain `configuration.nix` (tracks a NixOS channel, no flake)
+- **flake** - a `flake.nix` (installed offline; see [Flake offline support](#flake-offline-support))
 
 ## Usage
 
@@ -67,8 +67,8 @@ run it, the script:
    `/mnt/etc/nixos`, then restores the generated `hardware-configuration.nix`.
    Your config owns users and passwords (see
    [Users and passwords](#users-and-passwords)).
-3. Builds the system **in the live installer store** — channels via
-   `nix-build '<nixpkgs/nixos>'`, flake via `nix build …#…toplevel` — and installs
+3. Builds the system **in the live installer store** channels via
+   `nix-build '<nixpkgs/nixos>'`, flake via `nix build …#…toplevel` and installs
    the finished path with `nixos-install --system`, which just copies the closure
    to the target. Building in the live store (not the empty target store) is what
    lets the install succeed offline.
@@ -97,20 +97,10 @@ configs/
 ## Manual partitioning (encrypted root + swap)
 
 `offline-install --disk` only makes a simple unencrypted layout. For an
-encrypted install — the CLI equivalent of what the graphical installer offers —
-partition by hand, then run `offline-install` (no `--disk`) against what you
-mounted at `/mnt`. The ISO already ships everything you need: `cryptsetup`,
-`lvm2`, `parted`, and the `mkfs`/`mkswap` tools. Run **`partition-help`** at the
-console (or read [`cli/partition-help.txt`](cli/partition-help.txt)) for the
-full worked example; the shape is:
-
-1. GPT with a ~1 GiB EFI system partition + a second partition for the container.
-2. `cryptsetup luksFormat --type luks2` + `cryptsetup open` the second partition.
-3. LVM inside it (`pvcreate`/`vgcreate`/`lvcreate`) for `swap` + `root` — one
-   passphrase unlocks both, and swap is encrypted because it lives in the
-   container.
-4. `mkfs.ext4` the root LV, `mkswap` the swap LV, then mount at `/mnt` (+ ESP at
-   `/mnt/boot`) and `swapon`.
+encrypted install, manually partition and then run `offline-install`.  
+Run **`partition-help`** at the console (or read [`cli/partition-help.txt`](cli/partition-help.txt))
+to view example instructions for partitioning, formatating, and created LUKS 
+encrypted volumes.
 
 `offline-install` runs `nixos-generate-config`, which auto-detects the
 filesystems and swap. It does **not** detect the LUKS layer beneath LVM, so you
@@ -140,7 +130,7 @@ login). The example configs use `initialPassword = "test"` for `root` and
 At boot the live installer seeds a **writable copy** of the baked `/iso/nix-cfg`
 into `/tmp/nix-cfg` (the baked copy is read-only iso9660). Edit
 `/tmp/nix-cfg/configuration.nix` from the console before running
-`offline-install` — for example to add a `boot.initrd.luks.devices` entry for an
+`offline-install`, for example to add a `boot.initrd.luks.devices` entry for an
 encrypted disk. `offline-install` prefers `/tmp/nix-cfg` over `/iso/nix-cfg`, so
 your edits are what gets installed; the seed only runs when `/tmp/nix-cfg`
 doesn't already exist, so a hand-made copy is never clobbered. Remember you can
