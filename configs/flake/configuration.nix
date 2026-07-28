@@ -20,7 +20,7 @@
     settings.PasswordAuthentication = true;
   };
 
-  # Test credentials only — change for any real use.
+  # Test credentials only.
   users.users.root.initialPassword = "test";
   users.users.tester = {
     isNormalUser = true;
