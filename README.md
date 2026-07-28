@@ -124,8 +124,8 @@ boot.initrd.luks.devices."cryptroot".device =
 ```
 
 (If you skip LVM and put ext4 directly on the LUKS device,
-`nixos-generate-config` *does* add that entry for you — see the notes in
-`partition-help`.)
+`nixos-generate-config` *does* add that entry for you (see the notes in
+`partition-help`).
 
 ### Users and passwords
 
