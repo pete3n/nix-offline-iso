@@ -1,15 +1,13 @@
-# PLACEHOLDER hardware-configuration.nix — vendor-neutral on purpose.
-#
+# Placeholder hardware-configuration.nix
+
 # This file only exists so the target system can be evaluated at ISO-build time
 # (and, for the channels installer, so its closure lands in the store). At
 # install time the real `nixos-generate-config` scan regenerates it for the
-# actual machine and the installer restores that generated copy — so nothing
-# here needs to match your hardware.
+# actual machine and the installer restores that generated copy.
+
+# Nothing here needs to match your hardware provided all dependencies are baked
+# into the ISO closure.
 #
-# Do NOT hard-code CPU-specific force-loaded modules (e.g. kvm-intel/kvm-amd)
-# here: for the channels installer this file is merged into the live installer,
-# and a force-loaded kvm-intel makes systemd-modules-load fail with "Operation
-# not supported" on hosts/VMs without that CPU's virtualization exposed.
 { config, lib, pkgs, modulesPath, ... }:
 
 {
@@ -42,6 +40,4 @@
   networking.useDHCP = lib.mkDefault true;
 
   nixpkgs.hostPlatform = lib.mkDefault "x86_64-linux";
-  # Microcode / CPU-vendor specifics intentionally omitted from the placeholder;
-  # the real scan adds them at install time.
 }

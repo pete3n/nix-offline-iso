@@ -1,12 +1,3 @@
-# Example TARGET system config — channels style (no flake).
-#
-# This whole directory is copied to /iso/nix-cfg on the ISO, and the installer
-# copies it into /etc/nixos on the target before running `nixos-install`. The
-# ISO build also puts this system's closure into the store so the install works
-# fully offline.
-#
-# Kept deliberately minimal (no desktop) so the ISO stays small and builds fast
-# for testing. SSH is enabled so the installed VM can be reached over localhost.
 { config, pkgs, ... }:
 
 {
