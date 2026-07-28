@@ -68,7 +68,7 @@
         pkgs.writeShellApplication {
           name = "partition-help";
           runtimeInputs = [ pkgs.coreutils ];
-          text = ''cat ${./cli/partition-help.txt}'';
+          text = "cat ${./cli/partition-help.txt}";
         };
 
       installerModule =
