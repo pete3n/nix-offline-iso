@@ -46,6 +46,11 @@ nix build .#iso.flake-x86_64-linux
    - For a **flake** target, pass `--host NAME` if your
      `nixosConfigurations.<name>` isn't the default `nixos`.
 
+   For an **encrypted** or otherwise custom layout, partition by hand before
+   running `offline-install` — run `partition-help` at the console for a
+   worked LUKS2 + LVM (encrypted root + swap) example. See
+   [Manual partitioning](#manual-partitioning-encrypted-root--swap).
+
    The install may appear to sit for a long time while it builds and copies from
    the store — that is expected.
 
@@ -83,10 +88,44 @@ already in the store.
 ```
 flake.nix                     ISO builder (minimal installer + offline logic)
 cli/offline-install.sh        console installer script (shipped on the ISO)
+cli/partition-help.txt        manual partitioning cheat-sheet (`partition-help`)
 configs/
   channels/                   example channels target (configuration.nix)
   flake/                      example flake target (flake.nix + configuration.nix)
 ```
+
+## Manual partitioning (encrypted root + swap)
+
+`offline-install --disk` only makes a simple unencrypted layout. For an
+encrypted install — the CLI equivalent of what the graphical installer offers —
+partition by hand, then run `offline-install` (no `--disk`) against what you
+mounted at `/mnt`. The ISO already ships everything you need: `cryptsetup`,
+`lvm2`, `parted`, and the `mkfs`/`mkswap` tools. Run **`partition-help`** at the
+console (or read [`cli/partition-help.txt`](cli/partition-help.txt)) for the
+full worked example; the shape is:
+
+1. GPT with a ~1 GiB EFI system partition + a second partition for the container.
+2. `cryptsetup luksFormat --type luks2` + `cryptsetup open` the second partition.
+3. LVM inside it (`pvcreate`/`vgcreate`/`lvcreate`) for `swap` + `root` — one
+   passphrase unlocks both, and swap is encrypted because it lives in the
+   container.
+4. `mkfs.ext4` the root LV, `mkswap` the swap LV, then mount at `/mnt` (+ ESP at
+   `/mnt/boot`) and `swapon`.
+
+`offline-install` runs `nixos-generate-config`, which auto-detects the
+filesystems and swap. It does **not** detect the LUKS layer beneath LVM, so you
+must declare the unlock device yourself. Because this installer regenerates
+`hardware-configuration.nix` at install time, put it in your
+**`configuration.nix`** (which is preserved), not the hardware file:
+
+```nix
+boot.initrd.luks.devices."cryptroot".device =
+  "/dev/disk/by-uuid/<UUID of the LUKS partition>";
+```
+
+(If you skip LVM and put ext4 directly on the LUKS device,
+`nixos-generate-config` *does* add that entry for you — see the notes in
+`partition-help`.)
 
 ### Users and passwords
 
@@ -98,11 +137,15 @@ login). The example configs use `initialPassword = "test"` for `root` and
 
 ### Dynamic configuration
 
-You can customize a configuration at install time by placing it in `/tmp/nix-cfg`.
-The installer prefers it over the baked-in `/iso/nix-cfg`, so you can edit the
-config after booting the live environment. Remember though, you can safely remove
-items from a configuration, but if your edits add dependencies that aren't in the
-ISO store, the offline install will fail.
+At boot the live installer seeds a **writable copy** of the baked `/iso/nix-cfg`
+into `/tmp/nix-cfg` (the baked copy is read-only iso9660). Edit
+`/tmp/nix-cfg/configuration.nix` from the console before running
+`offline-install` — for example to add a `boot.initrd.luks.devices` entry for an
+encrypted disk. `offline-install` prefers `/tmp/nix-cfg` over `/iso/nix-cfg`, so
+your edits are what gets installed; the seed only runs when `/tmp/nix-cfg`
+doesn't already exist, so a hand-made copy is never clobbered. Remember you can
+safely remove items from a configuration, but if your edits add dependencies
+that aren't in the ISO store, the offline install will fail.
 
 ## Flake offline support
 

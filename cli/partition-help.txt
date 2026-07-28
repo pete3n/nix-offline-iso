@@ -1,0 +1,101 @@
+NixOS offline installer — manual partitioning
+=============================================
+
+`offline-install --disk /dev/sdX` makes a simple UNENCRYPTED layout. For an
+encrypted install, partition by hand with the commands below, then run
+`sudo offline-install` (no --disk) to install onto whatever you mounted at /mnt.
+
+Every tool used here is already on this ISO: parted, cryptsetup, lvm2, mkfs.*,
+mkswap, wipefs, blkid, lsblk.
+
+
+Example: encrypted root + swap (LUKS2 + LVM)
+--------------------------------------------
+
+Layout: a small EFI system partition, plus one LUKS2 container holding an LVM
+volume group with swap + root. A single passphrase unlocks everything, and swap
+is encrypted too because it lives inside the container.
+
+Replace /dev/sdX with your target disk (see `lsblk`). NVMe/eMMC disks name
+their partitions p1/p2 (e.g. /dev/nvme0n1p1), not 1/2.
+
+  ####  every command below ERASES data on /dev/sdX  ####
+
+# 1. Partition: 1 GiB EFI system partition + rest for the LUKS container
+wipefs -a /dev/sdX
+parted -s /dev/sdX -- \
+  mklabel gpt \
+  mkpart ESP fat32 1MiB 1025MiB \
+  set 1 esp on \
+  mkpart cryptroot ext4 1025MiB 100%
+
+# 2. EFI system partition -> FAT32
+mkfs.fat -F 32 -n boot /dev/sdX1
+
+# 3. Create + open the LUKS2 container (prompts for a passphrase)
+cryptsetup luksFormat --type luks2 /dev/sdX2
+cryptsetup open /dev/sdX2 cryptroot        # unlocks at /dev/mapper/cryptroot
+
+# 4. LVM inside the container: swap + root
+pvcreate /dev/mapper/cryptroot
+vgcreate vg /dev/mapper/cryptroot
+lvcreate -L 8G       -n swap vg            # size swap to taste
+lvcreate -l 100%FREE -n root vg
+
+# 5. Filesystems + swap
+mkfs.ext4 -L nixos /dev/vg/root
+mkswap    -L swap  /dev/vg/swap
+
+# 6. Mount the target at /mnt and turn on swap
+mount /dev/vg/root /mnt
+mkdir -p /mnt/boot
+mount -o umask=0077 /dev/sdX1 /mnt/boot    # 0077: keep the boot random seed private
+swapon /dev/vg/swap
+
+
+Tell NixOS how to unlock the disk at boot
+-----------------------------------------
+
+`offline-install` runs `nixos-generate-config`, which inspects what you mounted
+and fills in hardware-configuration.nix for you. From the layout above it
+records these automatically, with no edits from you:
+
+  fileSystems."/"     -> /dev/disk/by-uuid/...   (ext4 on /dev/vg/root)
+  fileSystems."/boot" -> /dev/disk/by-uuid/...   (the EFI partition)
+  swapDevices         -> /dev/disk/by-uuid/...   (/dev/vg/swap)
+
+But it CANNOT see the LUKS layer sitting under LVM, so it does NOT add the entry
+that unlocks the container at boot. Without that entry the system builds fine
+but will not boot.
+
+Add it yourself. This installer regenerates hardware-configuration.nix at
+install time (any edits to that file are discarded), so put durable settings in
+your CONFIGURATION.NIX instead — that file is preserved as-is:
+
+  # in your configuration.nix (e.g. /tmp/nix-cfg/configuration.nix)
+  boot.initrd.luks.devices."cryptroot".device =
+    "/dev/disk/by-uuid/PASTE-UUID-OF-/dev/sdX2";
+
+Get that UUID — the LUKS *partition* /dev/sdX2, not the /dev/mapper device — with:
+
+  blkid -s UUID -o value /dev/sdX2
+
+Then install:
+
+  sudo offline-install
+
+
+Notes
+-----
+* Simpler, without LVM: put ext4 straight on the LUKS device
+  (`cryptsetup open ...` then `mkfs.ext4 /dev/mapper/cryptroot`, mount it at
+  /mnt). Because the root filesystem then sits directly on LUKS,
+  nixos-generate-config DOES add the boot.initrd.luks.devices entry for you —
+  no configuration.nix change needed. For swap in that case, add a swapfile
+  (encrypted, since it lives on the encrypted root) in configuration.nix:
+      swapDevices = [ { device = "/swapfile"; size = 8192; } ];   # size in MiB
+* SSD TRIM through the encrypted device (a small privacy trade-off), in
+  configuration.nix:
+      boot.initrd.luks.devices."cryptroot".allowDiscards = true;
+* Hibernate to the encrypted swap, in configuration.nix:
+      boot.resumeDevice = "/dev/disk/by-uuid/<the /dev/vg/swap UUID>";

@@ -60,20 +60,83 @@
           text = builtins.readFile ./cli/offline-install.sh;
         };
 
+      # A console cheat-sheet of manual partitioning commands (encrypted root +
+      # swap). Shipped on the ISO so it is readable offline at the install
+      # prompt — the CLI equivalent of the graphical installer's partitioner.
+      # Run `partition-help` to print it.
+      partitionHelp =
+        pkgs:
+        pkgs.writeShellApplication {
+          name = "partition-help";
+          runtimeInputs = [ pkgs.coreutils ];
+          text = ''cat ${./cli/partition-help.txt}'';
+        };
+
       installerModule =
         { pkgs, lib, ... }:
         {
-          environment.systemPackages = [ (offlineInstaller pkgs) ];
+          environment.systemPackages = [
+            (offlineInstaller pkgs)
+            (partitionHelp pkgs)
+            # cryptsetup + lvm2 back the encrypted-install flow (`partition-help`).
+            # The installation-device base already ships both; listed here to
+            # make that dependency explicit and survive an upstream base change.
+            pkgs.cryptsetup
+            pkgs.lvm2
+            # Interactive convenience on the live console (long-running installs).
+            pkgs.tmux
+          ];
+
+          # The installer image enables ZFS support, which makes the zfs module
+          # warn that boot.zfs.forceImportRoot still defaults to `true`. The
+          # installer never boots from a ZFS root pool, so take the recommended
+          # 26.11+ default and silence the warning.
+          boot.zfs.forceImportRoot = false;
+
+          # Seed a writable copy of the baked config into /tmp/nix-cfg at boot.
+          # /iso/nix-cfg is read-only (iso9660), but the user often needs to edit
+          # configuration.nix from the CLI before installing — e.g. to add a
+          # boot.initrd.luks.devices entry for an encrypted disk (see
+          # partition-help). offline-install already prefers /tmp/nix-cfg over
+          # /iso/nix-cfg, so seeding it makes the editable copy the one that
+          # installs. The ConditionPathExists guard runs it once and never
+          # clobbers an existing /tmp/nix-cfg (e.g. one the user set up by hand).
+          systemd.services.seed-nix-cfg = {
+            description = "Seed an editable config copy into /tmp/nix-cfg";
+            wantedBy = [ "multi-user.target" ];
+            path = [ pkgs.coreutils ];
+            unitConfig = {
+              RequiresMountsFor = "/iso";
+              ConditionPathExists = [
+                "/iso/nix-cfg"
+                "!/tmp/nix-cfg"
+              ];
+            };
+            serviceConfig = {
+              Type = "oneshot";
+              RemainAfterExit = true;
+            };
+            script = ''
+              cp -rT /iso/nix-cfg /tmp/nix-cfg
+              chmod -R u+w /tmp/nix-cfg
+            '';
+          };
+
           # Shown at the console login of the live installer.
           users.motd = lib.mkForce ''
 
             NixOS offline installer (CLI)
 
+            Keyboard not US-QWERTY? Change the console layout, e.g. loadkeys dvorak
+            (back to QWERTY: loadkeys us  |  list layouts: localectl list-keymaps)
+
               1. Partition and mount your target at /mnt
                  (or let the installer do one disk: offline-install --disk /dev/sdX)
-              2. sudo offline-install
+                 Encrypted or manual layout? Run: partition-help
+              2. Edit /tmp/nix-cfg/configuration.nix if needed (e.g. LUKS device)
+              3. sudo offline-install
 
-            Baked config: /iso/nix-cfg   (override by editing a copy in /tmp/nix-cfg)
+            Config to install: /tmp/nix-cfg  (editable copy of baked /iso/nix-cfg)
           '';
 
           # Headless access to the LIVE installer. A minimal (console) image has
