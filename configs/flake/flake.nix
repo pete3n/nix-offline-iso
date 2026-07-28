@@ -19,8 +19,9 @@
   outputs =
     { self, nixpkgs, ... }:
     {
-      # The attribute name here ("nixos") must match the hostname entered in
-      # Calamares; the installer builds `--flake /etc/nixos#<hostname>`.
+      # The offline installer auto-selects this attribute: it uses the sole
+      # nixosConfigurations entry if there is exactly one, otherwise it looks
+      # for one named "nixos". Keep a single entry (or name it "nixos").
       nixosConfigurations.nixos = nixpkgs.lib.nixosSystem {
         system = "x86_64-linux";
         modules = [

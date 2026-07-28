@@ -51,22 +51,51 @@
               grep -q -- '"--system", offline_system_path\]' "$main" \
                 || { echo "ERROR: nixos-install anchor missing in main.py"; exit 1; }
 
-              # 4. Remove the user configuraiton step from the Calamares install process.
-              # The user provided config sets users and passwords.
-							settings=$out/etc/calamares/settings.conf
+              # 4. Strip the Calamares pages/jobs whose choices the
+              # user-provided configuration overrides. main.py still generates a
+              # configuration.nix from whatever remains, but the injected
+              # config-copy step replaces it wholesale, so removing these only
+              # drops dead UI (and, for users, the inert account-creation job):
+              #   - users:           our config owns users, passwords, hostname
+              #                      (both the show page and the exec job)
+              #   - packagechooser:  desktop-environment selection
+              #   - notesqml@unfree: free/unfree software notice
+              # The flake install path auto-selects its nixosConfigurations
+              # attribute (see calamares/inject/config-copy.py), so it no longer
+              # needs the hostname the removed users page used to collect.
+              settings=$out/etc/calamares/settings.conf
+              # Sanity-check each anchor is present up front, so an upstream
+              # rename fails loudly here instead of silently leaving the page in
+              # (a post-removal count of 0 alone can't tell "removed" from
+              # "never there").
+              for anchor in users packagechooser 'notesqml@unfree'; do
+                grep -qE "^[[:space:]]*-[[:space:]]*$anchor[[:space:]]*\$" "$settings" \
+                  || { echo "ERROR: expected a '$anchor' entry in settings.conf sequence"; exit 1; }
+              done
               awk '
-                /^- exec:/ { in_exec = 1 }
-                /^- show:/ { in_exec = 0 }
-                in_exec && /^[[:space:]]*-[[:space:]]*users[[:space:]]*$/ { next }
+                /^[[:space:]]*-[[:space:]]*users[[:space:]]*$/ { next }
+                /^[[:space:]]*-[[:space:]]*packagechooser[[:space:]]*$/ { next }
+                /^[[:space:]]*-[[:space:]]*notesqml@unfree[[:space:]]*$/ { next }
                 { print }
               ' "$settings" > "$settings.new"
-              # Guard: exactly one `- users` (the show page) must remain. If the
-              # count is wrong the sequence changed upstream — fail loudly.
-              [ "$(grep -cE '^[[:space:]]*-[[:space:]]*users[[:space:]]*$' "$settings.new")" = 1 ] \
-                || { echo "ERROR: unexpected 'users' count in settings.conf exec sequence"; exit 1; }
+              # Guard: all three must now be gone from the sequence. Anything
+              # left means the sequence changed upstream — fail loudly.
+              for anchor in users packagechooser 'notesqml@unfree'; do
+                grep -qE "^[[:space:]]*-[[:space:]]*$anchor[[:space:]]*\$" "$settings.new" \
+                  && { echo "ERROR: '$anchor' still present in settings.conf sequence"; exit 1; }
+              done
               mv "$settings.new" "$settings"
             '';
         });
+      };
+
+      # Silence an upstream eval warning on the live installer image. The
+      # graphical calamares ISO enables ZFS support (zfs is in
+      # boot.supportedFilesystems), which makes the zfs module warn that
+      # boot.zfs.forceImportRoot still defaults to `true`. The installer never
+      # boots from a ZFS root pool, so take the recommended 26.11+ default.
+      zfsWarningFix = {
+        boot.zfs.forceImportRoot = false;
       };
 
       # Force the installer's nix to run offline. Without this, the
@@ -124,8 +153,21 @@
           modules = [
             { nixpkgs.overlays = [ calamaresOverlay ]; }
             offlineNixModule
+            zfsWarningFix
             "${nixpkgs}/nixos/modules/installer/cd-dvd/installation-cd-graphical-calamares-gnome.nix"
             ./configs/channels/configuration.nix
+            # The target config is merged into the live installer, whose
+            # installation-device profile sets root.initialHashedPassword = ""
+            # for passwordless login. Combined with the target's
+            # initialPassword that trips a "multiple password options set"
+            # warning. Drop the installer's value so the target config alone
+            # owns root's password.
+            (
+              { lib, ... }:
+              {
+                users.users.root.initialHashedPassword = lib.mkForce null;
+              }
+            )
             (isoModule {
               cfgDir = ./configs/channels;
               extraStoreContents = [ ];
@@ -196,6 +238,7 @@
           modules = [
             { nixpkgs.overlays = [ calamaresOverlay ]; }
             offlineNixModule
+            zfsWarningFix
             "${nixpkgs}/nixos/modules/installer/cd-dvd/installation-cd-graphical-calamares-gnome.nix"
             (isoModule {
               # Bake the path-pinned copy (not ./configs/flake) so the installed

@@ -84,11 +84,38 @@
         # the target. The hostname entered in Calamares must match a
         # nixosConfigurations.<name> attribute in the flake.
         if os.path.exists(os.path.join(root_mount_point, "etc/nixos/flake.nix")):
-            _offline_host = gs.value("hostname") or "nixos"
+            _offline_etc = os.path.join(root_mount_point, "etc/nixos")
+            # The offline ISO strips the Calamares hostname page, so nothing
+            # collects a hostname from the GUI. Pick the flake's
+            # nixosConfigurations attribute automatically: use the sole one if
+            # the flake defines exactly one, otherwise fall back to "nixos".
+            _offline_attr_name = "nixos"
+            _offline_names = subprocess.run(
+                [
+                    "pkexec",
+                    "nix",
+                    "eval",
+                    "--offline",
+                    "--json",
+                    _offline_etc + "#nixosConfigurations",
+                    "--apply",
+                    "builtins.attrNames",
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            if _offline_names.returncode == 0:
+                try:
+                    _offline_name_list = json.loads(_offline_names.stdout)
+                    if len(_offline_name_list) == 1:
+                        _offline_attr_name = _offline_name_list[0]
+                except (ValueError, TypeError):
+                    pass
             _offline_attr = (
-                os.path.join(root_mount_point, "etc/nixos")
+                _offline_etc
                 + "#nixosConfigurations."
-                + _offline_host
+                + _offline_attr_name
                 + ".config.system.build.toplevel"
             )
             _offline_build = subprocess.run(

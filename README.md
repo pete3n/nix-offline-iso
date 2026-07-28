@@ -20,8 +20,9 @@ Two install types are supported:
    If there are significant differences between the target hardware and the 
    `hardware-configuration.nix` template, then you may need to replace the template 
    config with the generated one so that the ISO includes necessary dependencies. 
-3. For a flake target, the `nixosConfigurations.<name>` attribute must match the
-   hostname you enter in Calamares (the example uses `nixos`).
+3. For a flake target, the installer selects the `nixosConfigurations.<name>`
+   attribute automatically: it uses the sole attribute if your flake defines
+   exactly one, otherwise it expects one named `nixos` (the example uses `nixos`).
 4. Build:
 
 ```
@@ -34,12 +35,14 @@ nix build .#iso.flake-x86_64-linux
 
 5. Write the ISO to disk with `dd` or equivalent tool.
 6. Boot the target and run the installer. Partition the target disk **partitioning** in 
-   Calamares installer. The disk configuration will be used. Most other GUI choices 
-   (locale, desktop, extra packages, the user) will be overwritten by the provided 
-   `configuration.nix`, so just click through them. For a **flake** target, set the 
-   **hostname** to match your `nixosConfigurations.<name>`. The install may appear 
-   to sit for a long time while it copies and rebuilds from the store. 
-   Toggle the log to see activity.
+   Calamares installer. The disk configuration will be used. The desktop, software, 
+   and user-configuration (user/password/hostname) pages are removed since the 
+   provided `configuration.nix` owns those; the remaining GUI choices (locale, 
+   keyboard) are also overwritten by it, so just click through them. For a **flake** 
+   target the installer picks your `nixosConfigurations.<name>` automatically (the 
+   sole attribute, or one named `nixos`), so there is no hostname to enter. The 
+   install may appear to sit for a long time while it copies and rebuilds from the 
+   store. Toggle the log to see activity.
 
 ## How it works
 
@@ -54,8 +57,14 @@ The overlay:
    (`calamares/inject/config-copy.py`) that copies your files from
    `/tmp/nix-cfg` or `/iso/nix-cfg` into `/etc/nixos`, preserving the
    freshly generated `hardware-configuration.nix`.
-3. Removes Calamares' user configuartion. Your config owns users and
-   passwords (see [Users and passwords](#users-and-passwords)).
+3. Removes the Calamares pages whose choices your configuration overrides:
+   the user-configuration page (your config owns users, passwords, and the
+   hostname, see [Users and passwords](#users-and-passwords)), the
+   desktop-environment selection page, and the free/unfree software page.
+   Whatever these would have generated is replaced wholesale by the copied
+   config in step 2. For a flake, the target `nixosConfigurations` attribute is
+   auto-selected (sole attribute, or one named `nixos`) instead of coming from
+   the removed hostname field.
 4. For a flake config, builds the system in the live installer store and
    installs the result with `nixos-install --system` (see
    [Flake offline support](#flake-offline-support)).
@@ -111,8 +120,9 @@ input with a complete lock needs no registry and no network.
 
 2. Build offline by using the live install environment store and passing the 
 finished path to `nixos-install --system`, which just copies the closure to the 
-target. The Calamares hostname must match a `nixosConfigurations.<name>` attribute 
-in the flake.
+target. The installer auto-selects the `nixosConfigurations.<name>` attribute to 
+build — the sole attribute if the flake defines exactly one, otherwise one named 
+`nixos`.
 
 3. Bake inputs into the closure. The ISO store carries the target system's built 
 closure, its derivation closure (`.drv`s + source tarballs, for the hardware-config rebuild), 
