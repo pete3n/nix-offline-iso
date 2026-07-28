@@ -89,11 +89,6 @@
         });
       };
 
-      # Silence an upstream eval warning on the live installer image. The
-      # graphical calamares ISO enables ZFS support (zfs is in
-      # boot.supportedFilesystems), which makes the zfs module warn that
-      # boot.zfs.forceImportRoot still defaults to `true`. The installer never
-      # boots from a ZFS root pool, so take the recommended 26.11+ default.
       zfsWarningFix = {
         boot.zfs.forceImportRoot = false;
       };
@@ -156,12 +151,6 @@
             zfsWarningFix
             "${nixpkgs}/nixos/modules/installer/cd-dvd/installation-cd-graphical-calamares-gnome.nix"
             ./configs/channels/configuration.nix
-            # The target config is merged into the live installer, whose
-            # installation-device profile sets root.initialHashedPassword = ""
-            # for passwordless login. Combined with the target's
-            # initialPassword that trips a "multiple password options set"
-            # warning. Drop the installer's value so the target config alone
-            # owns root's password.
             (
               { lib, ... }:
               {

@@ -61,10 +61,10 @@ The overlay:
    the user-configuration page (your config owns users, passwords, and the
    hostname, see [Users and passwords](#users-and-passwords)), the
    desktop-environment selection page, and the free/unfree software page.
-   Whatever these would have generated is replaced wholesale by the copied
-   config in step 2. For a flake, the target `nixosConfigurations` attribute is
-   auto-selected (sole attribute, or one named `nixos`) instead of coming from
-   the removed hostname field.
+   Whatever these would have generated is replaced by the copied config in step 2. 
+   For a flake, the target `nixosConfigurations` attribute is auto-selected 
+   (sole attribute, or one named `nixos`) instead of coming from the removed 
+   hostname field.
 4. For a flake config, builds the system in the live installer store and
    installs the result with `nixos-install --system` (see
    [Flake offline support](#flake-offline-support)).
