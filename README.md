@@ -7,8 +7,8 @@ by including all of its dependencies in the ISO's Nix store.
 Targets the **NixOS 26.05** `calamares-nixos-extensions`. 
 Two install types are supported:
 
-- **channels** — a plain `configuration.nix` (tracks a NixOS channel, no flake)
-- **flake** — a `flake.nix` (installed offline; see [Flake offline support](#flake-offline-support))
+- **channels** - a plain `configuration.nix` (tracks a NixOS channel, no flake)
+- **flake** - a `flake.nix` (installed offline; see [Flake offline support](#flake-offline-support))
 
 ## Usage
 
@@ -121,8 +121,7 @@ input with a complete lock needs no registry and no network.
 2. Build offline by using the live install environment store and passing the 
 finished path to `nixos-install --system`, which just copies the closure to the 
 target. The installer auto-selects the `nixosConfigurations.<name>` attribute to 
-build — the sole attribute if the flake defines exactly one, otherwise one named 
-`nixos`.
+build, otherwise one named `nixos`.
 
 3. Bake inputs into the closure. The ISO store carries the target system's built 
 closure, its derivation closure (`.drv`s + source tarballs, for the hardware-config rebuild), 
