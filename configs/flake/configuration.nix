@@ -1,7 +1,3 @@
-# Example TARGET system config — flake style (imported by ./flake.nix).
-#
-# Identical intent to the channels example, but consumed through a flake so we
-# can exercise offline `nixos-install --flake`. Kept minimal; SSH enabled.
 { config, pkgs, ... }:
 
 {
@@ -24,7 +20,7 @@
     settings.PasswordAuthentication = true;
   };
 
-  # Test credentials only — change for any real use.
+  # Test credentials only
   users.users.root.initialPassword = "test";
   users.users.tester = {
     isNormalUser = true;
