@@ -4,12 +4,13 @@
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixos-26.05";
 
-    # Example flake target which is included as an input so its system closure
-    # and input source trees can be pulled for offline install.
-    target-flake = {
-      url = "path:./configs/flake";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
+    # The flake target, included as an input so its system closure and input
+    # source trees can be pulled into the ISO store for offline install. Its
+    # inputs are NOT overridden to follow ours: the target pins its own nixpkgs
+    # (and any other inputs) via its committed flake.lock, which we bake into
+    # the ISO. Overriding here would make the baked closure and the baked lock
+    # disagree, so the offline install would miss store paths.
+    target-flake.url = "path:./configs/flake";
   };
 
   outputs =
@@ -170,51 +171,92 @@
         let
           pkgs = nixpkgs.legacyPackages.${system};
 
-          # Build the flake target WITH its build dependencies included in the
-          # toplevel closure (Linus Heckemann's include-build-dependencies
-          # technique). Because the offline install disables the binary cache,
-          # the store must be able to re-build the target after
+          # Pick which nixosConfiguration's closure to bake. The Calamares flake
+          # install auto-selects the same attribute at install time (see
+          # calamares/inject/config-copy.py), so the ISO must bake exactly one
+          # config's closure: prefer one named "nixos", else the sole entry.
+          targetConfigs = target-flake.nixosConfigurations;
+          targetNames = builtins.attrNames targetConfigs;
+          targetConfig =
+            if targetConfigs ? nixos then
+              targetConfigs.nixos
+            else if builtins.length targetNames == 1 then
+              targetConfigs.${builtins.head targetNames}
+            else
+              throw ''
+                nix-offline-iso: configs/flake exposes multiple nixosConfigurations
+                (${builtins.concatStringsSep ", " targetNames}) and none named "nixos".
+                The ISO bakes exactly one config's closure, so name your install
+                target "nixos" or expose a single configuration.
+              '';
+
+          # Build the flake target WITH build dependencies in the toplevel
+          # closure (Linus Heckemann's include-build-dependencies technique) so
+          # the offline install can re-build the target after
           # nixos-generate-config regenerates hardware-configuration.nix, which
           # makes the installed system differ slightly from the pre-baked one.
-          # The channel's target gets this via isoImage.includeSystemBuildDependencies;
-          # for the external flake it gets injected with extendModules.
           targetToplevel =
-            (target-flake.nixosConfigurations.nixos.extendModules {
+            (targetConfig.extendModules {
               modules = [ { system.includeBuildDependencies = true; } ];
             }).config.system.build.toplevel;
 
-          # A pre-computed flake.lock that pins the copied flake's `nixpkgs`
-          # input to the nixpkgs source path in the ISO store.
-          targetLock = builtins.toJSON {
-            version = 7;
-            root = "root";
-            nodes = {
-              root = {
-                inputs = {
-                  nixpkgs = "nixpkgs";
+          # The target flake must ship a committed, git-tracked lock so its input
+          # revisions can be pinned into the ISO for offline evaluation.
+          targetLockPath = ./configs/flake/flake.lock;
+          rawLock =
+            if builtins.pathExists targetLockPath then
+              builtins.fromJSON (builtins.readFile targetLockPath)
+            else
+              throw ''
+                nix-offline-iso: configs/flake/flake.lock is missing. The flake
+                target must carry a committed, git-tracked lock so its inputs can
+                be pinned into the ISO for offline install. Generate it with:
+                  nix flake lock ./configs/flake && git add configs/flake/flake.lock
+              '';
+
+          # Fetch each input's source (online, at ISO-build time) and repin its
+          # `locked` ref to that store path, leaving `original` and flake.nix
+          # untouched. A github original with a path locked evaluates fully
+          # offline — Nix reuses the lock without re-fetching and resolves the
+          # source from the store — and `follows` edges are preserved, so any
+          # real multi-input flake works, not just a lone nixpkgs.
+          pinNode =
+            _name: node:
+            if node ? locked then
+              let
+                fetched = fetchTree (removeAttrs node.locked [ "lastModified" ]);
+              in
+              {
+                value = node // {
+                  locked =
+                    {
+                      type = "path";
+                      path = fetched.outPath;
+                      narHash = fetched.narHash;
+                    }
+                    // (if node.locked ? lastModified then { inherit (node.locked) lastModified; } else { });
                 };
+                source = fetched.outPath;
+              }
+            else
+              {
+                value = node;
+                source = null;
               };
-              nixpkgs = {
-                original = {
-                  type = "path";
-                  path = "${nixpkgs}";
-                };
-                locked = {
-                  type = "path";
-                  path = "${nixpkgs}";
-                  narHash = nixpkgs.narHash;
-                  lastModified = nixpkgs.lastModified;
-                };
-              };
-            };
-          };
+
+          pinned = builtins.mapAttrs pinNode rawLock.nodes;
+          offlineLock = builtins.toJSON (
+            rawLock // { nodes = builtins.mapAttrs (_name: entry: entry.value) pinned; }
+          );
+          # Every input source, to seed into the ISO store for the offline build.
+          inputSources = builtins.filter (path: path != null) (
+            map (entry: entry.source) (builtins.attrValues pinned)
+          );
 
           flakeCfgDir = pkgs.runCommand "offline-flake-cfg" { } ''
             cp -r ${./configs/flake} $out
             chmod -R u+w $out
-            substituteInPlace $out/flake.nix \
-              --replace-fail 'nixpkgs.url = "nixpkgs";' 'nixpkgs.url = "path:${nixpkgs}";'
-            cp ${pkgs.writeText "flake.lock" targetLock} $out/flake.lock
+            cp ${pkgs.writeText "flake.lock" offlineLock} $out/flake.lock
             # Keep it writable in case nix ever wants to touch it on the target.
             chmod u+w $out/flake.lock
           '';
@@ -242,9 +284,10 @@
                 # `isoImage.includeSystemBuildDependencies` bakes for the
                 # channels target; without it, offline rebuild fails for flakes.
                 targetToplevel.drvPath
-                # nixpkgs source path for the copied flake.
-                nixpkgs.outPath
-              ];
+              ]
+              # Every flake input's source (nixpkgs + any others), so the baked
+              # path-pinned lock resolves entirely from the store offline.
+              ++ inputSources;
             })
           ];
         };
