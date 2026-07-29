@@ -39,9 +39,13 @@ nix build .#iso.flake-x86_64-linux
 
 5. Write the ISO to disk with `dd` or an equivalent tool.
 6. Boot the target. At the console:
-   - Partition and mount your target at `/mnt` yourself, **or** let the installer
-     do a single disk: `offline-install --disk /dev/sdX` (GPT: 1024 MiB ESP + ext4
-     root — **erases the disk**).
+   - **disko flake target?** Just run `sudo offline-install --host NAME`. disko
+     partitions, formats and mounts the disk(s) declared in your config (at
+     `/mnt`) — don't partition by hand or pass `--disk`. Pass `--no-disko` to opt
+     out and partition yourself.
+   - Otherwise: partition and mount your target at `/mnt` yourself, **or** let the
+     installer do a single disk: `offline-install --disk /dev/sdX` (GPT: 1024 MiB
+     ESP + ext4 root — **erases the disk**).
    - Run `sudo offline-install`.
    - For a **flake** target, pass `--host NAME` if your
      `nixosConfigurations.<name>` isn't the default `nixos`.
@@ -142,28 +146,49 @@ that aren't in the ISO store, the offline install will fail.
 Offline flake installs require several workarounds (see
 [nix#8953](https://github.com/NixOS/nix/issues/8953)):
 
-1. **Evaluate offline** by pinning `nixpkgs` to a store path. At ISO-build time
-   the builder bakes a *copy* of your flake whose `nixpkgs` input is rewritten to
-   `path:/nix/store/…-source` (the nixpkgs already in the ISO store), together
-   with a matching, complete `flake.lock`. A `path:` input with a complete lock
-   needs no registry and no network.
+1. **Evaluate offline** by pinning *every* input to a store path. At ISO-build
+   time the builder bakes a *copy* of your flake with a rewritten `flake.lock`:
+   for each input it reads your committed lock, fetches that input's source, and
+   repoints the input's `locked` ref to the resulting `/nix/store/…` path. Your
+   `flake.nix` is copied verbatim — `inputs` and `outputs` are untouched — so
+   `follows` edges (e.g. `disko` following `nixpkgs`) keep working. A `github`
+   `original` with a `path` `locked` needs no registry and no network: Nix
+   reuses the lock without re-fetching and resolves each source from the store.
+   This works for any real multi-input flake, not just a lone `nixpkgs`.
 
 2. **Build offline** in the live installer store, then pass the finished path to
    `nixos-install --system`, which just copies the closure to the target. The
    installer hostname (or `--host`) must match a `nixosConfigurations.<name>`
-   attribute in the flake.
+   attribute in the flake. The ISO bakes exactly one config's closure: the entry
+   named `nixos`, or the sole entry if there is only one.
 
 3. **Bake the inputs** into the closure. The ISO store carries the target
    system's built closure, its derivation closure (`.drv`s + source tarballs, for
-   the hardware-config rebuild), and the nixpkgs source.
+   the hardware-config rebuild), and the source tree of every flake input.
 
-Do **not** commit a `configs/flake/flake.lock`; the builder generates the
-path-pinned lock for the ISO copy. The repo `flake.nix` uses an indirect
-`nixpkgs` so it still resolves normally on a networked machine.
+You **must** commit a git-tracked `configs/flake/flake.lock` (generate it with
+`nix flake lock ./configs/flake`); the builder reads it to learn which input
+revisions to pin. An untracked lock is invisible to the flake and the build will
+tell you it is missing.
 
-**After install**, the target's `/etc/nixos/flake.nix` carries the store-path
-`nixpkgs` ref. For online rebuilds later, repoint it to a channel, e.g.
-`nixpkgs.url = "github:nixos/nixpkgs/nixos-26.05";`, then `nix flake update`.
+**After install**, the target's `/etc/nixos/flake.nix` is unchanged — it still
+carries your original `github:` input refs — but its `flake.lock` points every
+input at a store path. For online rebuilds later, run `nix flake update` to
+re-lock against the network.
+
+### disko targets
+
+If your flake config imports [disko](https://github.com/nix-community/disko)
+and declares a `disko.devices` layout, `offline-install` uses it: the builder
+bakes the config's `system.build.diskoScript` (and its closure) into the ISO,
+and at install time the script runs disko to wipe, partition, format and mount
+the declared disk(s) at `/mnt`, then installs. It does **not** run
+`nixos-generate-config` for a disko target, because disko already owns the
+`fileSystems` config — running both would define `fileSystems."/"` twice and
+fail evaluation. Keep filesystem-independent hardware bits (kernel modules,
+`nixpkgs.hostPlatform`) in your committed `hardware-configuration.nix`; it is
+used as-is. Use `--no-disko` to partition/mount yourself while still letting
+disko own `fileSystems`.
 
 ### Free disk space
 

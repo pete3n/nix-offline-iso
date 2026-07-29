@@ -4,12 +4,11 @@
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixos-26.05";
 
-    # Example flake target, included as an input so its system closure and input
+    # The flake target, included as an input so its system closure and input
     # source trees can be pulled into the ISO store for offline install.
-    target-flake = {
-      url = "path:./configs/flake";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
+		# The target pins its own nixpkgs (and any other inputs) via its 
+		# committed flake.lock which gets baked into the ISO.
+    target-flake.url = "path:./configs/flake";
   };
 
   outputs =
@@ -109,18 +108,22 @@
           # Shown at the console login of the live installer.
           users.motd = lib.mkForce ''
 
-            NixOS offline installer (CLI)
+            NixOS offline installer
 
             Keyboard not US-QWERTY? Change the console layout, e.g. loadkeys dvorak
             (back to QWERTY: loadkeys us  |  list layouts: localectl list-keymaps)
 
               1. Partition and mount your target at /mnt
-                 (or let the installer do one disk: offline-install --disk /dev/sdX)
-                 Encrypted or manual layout? Run: partition-help
-              2. Edit /tmp/nix-cfg/configuration.nix if needed (e.g. LUKS device)
-              3. sudo offline-install
+								 - For help with partitioning commands run: partition-help
+							   - Let the installer auto-partition a basic Linux layout 
+								   (EFI, swap, root partition) with: sudo offline-install --disk /dev/sdX
+								 - If disko has been configured, just run: sudo offline-install --host <name>
 
-            Config to install: /tmp/nix-cfg  (editable copy of baked /iso/nix-cfg)
+              2. Edit /tmp/nix-cfg/configuration.nix if needed (e.g. for LUKS device)
+
+              3. Run: offline-install
+
+            The target host configuration is located at: /tmp/nix-cfg
           '';
 
           # Allow SSH in to run offline-install. The stock installer
@@ -195,50 +198,107 @@
           ];
         };
 
-      # Flake installer. Bakes a path-pinned copy of the flake (nixpkgs rewritten
-      # to a store path + a matching complete lock) so it evaluates offline, plus
-      # the target's built + derivation closures.
+      # Flake installer. Bakes a copy of the target flake whose every input is
+      # pinned to a store path (via a rewritten lock) so it evaluates offline,
+      # plus the target's built + derivation closures and each input's source.
+      #
+      # Reads the target's own committed flake.lock and, for each input, 
+			# swaps its `locked` ref for the store path of that input's source.
       mkFlakeInstaller =
         system:
         let
           pkgs = nixpkgs.legacyPackages.${system};
 
+          # Pick which nixosConfiguration's closure to bake. At install time the
+          # script selects a config by hostname (--host), but the ISO must bake
+          # exactly one config's closure so the offline build finds its store
+          # paths.
+          targetConfigs = target-flake.nixosConfigurations;
+          targetNames = builtins.attrNames targetConfigs;
+          targetConfig =
+            if targetConfigs ? nixos then
+              targetConfigs.nixos
+            else if builtins.length targetNames == 1 then
+              targetConfigs.${builtins.head targetNames}
+            else
+              throw ''
+                nix-offline-iso: configs/flake exposes multiple nixosConfigurations
+                (${builtins.concatStringsSep ", " targetNames}) and none named "nixos".
+                The ISO bakes exactly one config's closure, so name your install
+                target "nixos" or expose a single configuration.
+              '';
+
           targetToplevel =
-            (target-flake.nixosConfigurations.nixos.extendModules {
+            (targetConfig.extendModules {
               modules = [ { system.includeBuildDependencies = true; } ];
             }).config.system.build.toplevel;
 
-          # Complete flake.lock pinning the copied flake's `nixpkgs` to the store
-          targetLock = builtins.toJSON {
-            version = 7;
-            root = "root";
-            nodes = {
-              root = {
-                inputs = {
-                  nixpkgs = "nixpkgs";
+          # If the target declares a disko layout, bake its partition/format/mount
+          # script (and its runtime closure) into the ISO store so offline-install
+          # can partition the disk fully offline. `system.build.diskoScript` only
+          # exists when the disko module is imported, so guard on its presence and
+          # contribute nothing for a plain (non-disko) target.
+          diskoStoreContents =
+            if targetConfig.config.system.build ? diskoScript then
+              [ targetConfig.config.system.build.diskoScript ]
+            else
+              [ ];
+
+          # The target flake must ship a committed lock and must fetch the revs.
+					# It must also be git-tracked to be visible to Nix.
+          targetLockPath = ./configs/flake/flake.lock;
+          rawLock =
+            if builtins.pathExists targetLockPath then
+              builtins.fromJSON (builtins.readFile targetLockPath)
+            else
+              throw ''
+                nix-offline-iso: configs/flake/flake.lock is missing. The flake
+                target must carry a committed, git-tracked lock so its inputs can
+                be pinned into the ISO for offline install. Generate it with:
+                  nix flake lock ./configs/flake && git add configs/flake/flake.lock
+              '';
+
+          # Fetch each input's source (online, at ISO-build time) and repin its
+          # `locked` ref to that store path. `lastModified` is stripped from the
+          # fetch args (it is an output of fetchTree, not an accepted input) but
+          # kept in the rewritten node.
+          pinNode =
+            _name: node:
+            if node ? locked then
+              let
+                fetched = fetchTree (removeAttrs node.locked [ "lastModified" ]);
+              in
+              {
+                value = node // {
+                  locked =
+                    {
+                      type = "path";
+                      path = fetched.outPath;
+                      narHash = fetched.narHash;
+                    }
+                    // (if node.locked ? lastModified then { inherit (node.locked) lastModified; } else { });
                 };
+                source = fetched.outPath;
+              }
+            else
+              {
+                value = node;
+                source = null;
               };
-              nixpkgs = {
-                original = {
-                  type = "path";
-                  path = "${nixpkgs}";
-                };
-                locked = {
-                  type = "path";
-                  path = "${nixpkgs}";
-                  narHash = nixpkgs.narHash;
-                  lastModified = nixpkgs.lastModified;
-                };
-              };
-            };
-          };
+
+          pinned = builtins.mapAttrs pinNode rawLock.nodes;
+          offlineLock = builtins.toJSON (
+            rawLock // { nodes = builtins.mapAttrs (_name: entry: entry.value) pinned; }
+          );
+          # Every input source, to seed into the ISO store for the offline build.
+          inputSources = builtins.filter (path: path != null) (
+            map (entry: entry.source) (builtins.attrValues pinned)
+          );
 
           flakeCfgDir = pkgs.runCommand "offline-flake-cfg" { } ''
             cp -r ${./configs/flake} $out
             chmod -R u+w $out
-            substituteInPlace $out/flake.nix \
-              --replace-fail 'nixpkgs.url = "nixpkgs";' 'nixpkgs.url = "path:${nixpkgs}";'
-            cp ${pkgs.writeText "flake.lock" targetLock} $out/flake.lock
+            cp ${pkgs.writeText "flake.lock" offlineLock} $out/flake.lock
             chmod u+w $out/flake.lock
           '';
         in
@@ -254,8 +314,9 @@
               extraStoreContents = [
                 targetToplevel
                 targetToplevel.drvPath
-                nixpkgs.outPath
-              ];
+              ]
+              ++ diskoStoreContents
+              ++ inputSources;
             })
           ];
         };
