@@ -5,11 +5,9 @@
     nixpkgs.url = "github:nixos/nixpkgs/nixos-26.05";
 
     # The flake target, included as an input so its system closure and input
-    # source trees can be pulled into the ISO store for offline install. Its
-    # inputs are NOT overridden to follow ours: the target pins its own nixpkgs
-    # (and any other inputs) via its committed flake.lock, which we bake into
-    # the ISO. Overriding here would make the baked closure and the baked lock
-    # disagree, so the offline install would miss store paths.
+    # source trees can be pulled into the ISO store for offline install. The
+    # target pins its own nixpkgs (and any other inputs) via its committed
+    # flake.lock.
     target-flake.url = "path:./configs/flake";
   };
 
@@ -37,51 +35,36 @@
 
             # 2. Inject the user-config copy + flake detection.
             awk 'FNR==NR { block = block $0 ORS; next }
-                 /# build nixos-install command/ && !done { printf "%s", block; done = 1 }
-                 { print }' \
-              ${./calamares/inject/config-copy.py} "$main" > "$main.new"
+            		 /# build nixos-install command/ && !done { printf "%s", block; done = 1 }
+            		 { print }' \
+            	${./calamares/inject/config-copy.py} "$main" > "$main.new"
             grep -q "offline-iso: copy user-provided configuration" "$main.new" \
-              || { echo "ERROR: config-copy anchor missing in main.py"; exit 1; }
+            	|| { echo "ERROR: config-copy anchor missing in main.py"; exit 1; }
             mv "$main.new" "$main"
 
             # 3. For a flake install, pass the PRE-BUILT system path via
             # --system (config-copy.py builds it in the live store first).
             sed -i 's|^\([ \t]*\)"nixos-install",|\1"nixos-install",\n\1*(["--system", offline_system_path] if offline_system_path else []),|' "$main"
             grep -q -- '"--system", offline_system_path\]' "$main" \
-              || { echo "ERROR: nixos-install anchor missing in main.py"; exit 1; }
+            	|| { echo "ERROR: nixos-install anchor missing in main.py"; exit 1; }
 
             # 4. Strip the Calamares pages/jobs whose choices the
-            # user-provided configuration overrides. main.py still generates a
-            # configuration.nix from whatever remains, but the injected
-            # config-copy step replaces it wholesale, so removing these only
-            # drops dead UI (and, for users, the inert account-creation job):
-            #   - users:           our config owns users, passwords, hostname
-            #                      (both the show page and the exec job)
-            #   - packagechooser:  desktop-environment selection
-            #   - notesqml@unfree: free/unfree software notice
-            # The flake install path auto-selects its nixosConfigurations
-            # attribute (see calamares/inject/config-copy.py), so it no longer
-            # needs the hostname the removed users page used to collect.
-            settings=$out/etc/calamares/settings.conf
-            # Sanity-check each anchor is present up front, so an upstream
-            # rename fails loudly here instead of silently leaving the page in
-            # (a post-removal count of 0 alone can't tell "removed" from
-            # "never there").
+            # user-provided configuration overrides. 
             for anchor in users packagechooser 'notesqml@unfree'; do
-              grep -qE "^[[:space:]]*-[[:space:]]*$anchor[[:space:]]*\$" "$settings" \
-                || { echo "ERROR: expected a '$anchor' entry in settings.conf sequence"; exit 1; }
+            	grep -qE "^[[:space:]]*-[[:space:]]*$anchor[[:space:]]*\$" "$settings" \
+            		|| { echo "ERROR: expected a '$anchor' entry in settings.conf sequence"; exit 1; }
             done
             awk '
-              /^[[:space:]]*-[[:space:]]*users[[:space:]]*$/ { next }
-              /^[[:space:]]*-[[:space:]]*packagechooser[[:space:]]*$/ { next }
-              /^[[:space:]]*-[[:space:]]*notesqml@unfree[[:space:]]*$/ { next }
-              { print }
+            	/^[[:space:]]*-[[:space:]]*users[[:space:]]*$/ { next }
+            	/^[[:space:]]*-[[:space:]]*packagechooser[[:space:]]*$/ { next }
+            	/^[[:space:]]*-[[:space:]]*notesqml@unfree[[:space:]]*$/ { next }
+            	{ print }
             ' "$settings" > "$settings.new"
             # Guard: all three must now be gone from the sequence. Anything
             # left means the sequence changed upstream — fail loudly.
             for anchor in users packagechooser 'notesqml@unfree'; do
-              grep -qE "^[[:space:]]*-[[:space:]]*$anchor[[:space:]]*\$" "$settings.new" \
-                && { echo "ERROR: '$anchor' still present in settings.conf sequence"; exit 1; }
+            	grep -qE "^[[:space:]]*-[[:space:]]*$anchor[[:space:]]*\$" "$settings.new" \
+            		&& { echo "ERROR: '$anchor' still present in settings.conf sequence"; exit 1; }
             done
             mv "$settings.new" "$settings"
           '';
@@ -216,10 +199,7 @@
 
           # Fetch each input's source (online, at ISO-build time) and repin its
           # `locked` ref to that store path, leaving `original` and flake.nix
-          # untouched. A github original with a path locked evaluates fully
-          # offline — Nix reuses the lock without re-fetching and resolves the
-          # source from the store — and `follows` edges are preserved, so any
-          # real multi-input flake works, not just a lone nixpkgs.
+          # untouched.
           pinNode =
             _name: node:
             if node ? locked then
@@ -228,13 +208,12 @@
               in
               {
                 value = node // {
-                  locked =
-                    {
-                      type = "path";
-                      path = fetched.outPath;
-                      narHash = fetched.narHash;
-                    }
-                    // (if node.locked ? lastModified then { inherit (node.locked) lastModified; } else { });
+                  locked = {
+                    type = "path";
+                    path = fetched.outPath;
+                    narHash = fetched.narHash;
+                  }
+                  // (if node.locked ? lastModified then { inherit (node.locked) lastModified; } else { });
                 };
                 source = fetched.outPath;
               }
