@@ -6,8 +6,8 @@
 
     # The flake target, included as an input so its system closure and input
     # source trees can be pulled into the ISO store for offline install.
-		# The target pins its own nixpkgs (and any other inputs) via its 
-		# committed flake.lock which gets baked into the ISO.
+    # The target pins its own nixpkgs (and any other inputs) via its
+    # committed flake.lock which gets baked into the ISO.
     target-flake.url = "path:./configs/flake";
   };
 
@@ -108,22 +108,22 @@
           # Shown at the console login of the live installer.
           users.motd = lib.mkForce ''
 
-            NixOS offline installer
+                        NixOS offline installer
 
-            Keyboard not US-QWERTY? Change the console layout, e.g. loadkeys dvorak
-            (back to QWERTY: loadkeys us  |  list layouts: localectl list-keymaps)
+                        Keyboard not US-QWERTY? Change the console layout, e.g. loadkeys dvorak
+                        (back to QWERTY: loadkeys us  |  list layouts: localectl list-keymaps)
 
-              1. Partition and mount your target at /mnt
-								 - For help with partitioning commands run: partition-help
-							   - Let the installer auto-partition a basic Linux layout 
-								   (EFI, swap, root partition) with: sudo offline-install --disk /dev/sdX
-								 - If disko has been configured, just run: sudo offline-install --host <name>
+                          1. Partition and mount your target at /mnt
+            								 - For help with partitioning commands run: partition-help
+            							   - Let the installer auto-partition a basic Linux layout 
+            								   (EFI, swap, root partition) with: sudo offline-install --disk /dev/sdX
+            								 - If disko has been configured, just run: sudo offline-install --host <name>
 
-              2. Edit /tmp/nix-cfg/configuration.nix if needed (e.g. for LUKS device)
+                          2. Edit /tmp/nix-cfg/configuration.nix if needed (e.g. for LUKS device)
 
-              3. Run: offline-install
+                          3. Run: offline-install
 
-            The target host configuration is located at: /tmp/nix-cfg
+                        The target host configuration is located at: /tmp/nix-cfg
           '';
 
           # Allow SSH in to run offline-install. The stock installer
@@ -202,8 +202,8 @@
       # pinned to a store path (via a rewritten lock) so it evaluates offline,
       # plus the target's built + derivation closures and each input's source.
       #
-      # Reads the target's own committed flake.lock and, for each input, 
-			# swaps its `locked` ref for the store path of that input's source.
+      # Reads the target's own committed flake.lock and, for each input,
+      # swaps its `locked` ref for the store path of that input's source.
       mkFlakeInstaller =
         system:
         let
@@ -245,7 +245,7 @@
               [ ];
 
           # The target flake must ship a committed lock and must fetch the revs.
-					# It must also be git-tracked to be visible to Nix.
+          # It must also be git-tracked to be visible to Nix.
           targetLockPath = ./configs/flake/flake.lock;
           rawLock =
             if builtins.pathExists targetLockPath then
@@ -270,13 +270,12 @@
               in
               {
                 value = node // {
-                  locked =
-                    {
-                      type = "path";
-                      path = fetched.outPath;
-                      narHash = fetched.narHash;
-                    }
-                    // (if node.locked ? lastModified then { inherit (node.locked) lastModified; } else { });
+                  locked = {
+                    type = "path";
+                    path = fetched.outPath;
+                    narHash = fetched.narHash;
+                  }
+                  // (if node.locked ? lastModified then { inherit (node.locked) lastModified; } else { });
                 };
                 source = fetched.outPath;
               }
