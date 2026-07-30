@@ -107,23 +107,22 @@
 
           # Shown at the console login of the live installer.
           users.motd = lib.mkForce ''
+	NixOS offline installer
 
-                        NixOS offline installer
+	Keyboard not US-QWERTY? Change the console layout, e.g. loadkeys dvorak
+	(back to QWERTY: loadkeys us  |  list layouts: localectl list-keymaps)
 
-                        Keyboard not US-QWERTY? Change the console layout, e.g. loadkeys dvorak
-                        (back to QWERTY: loadkeys us  |  list layouts: localectl list-keymaps)
+	1. Partition and mount your target at /mnt
+		- For help with partitioning commands run: partition-help
+		- Let the installer auto-partition a basic Linux layout 
+		 (EFI, swap, root partition) with: sudo offline-install --disk /dev/sdX
+		- If disko has been configured, just run: sudo offline-install --host <name>
 
-                          1. Partition and mount your target at /mnt
-            								 - For help with partitioning commands run: partition-help
-            							   - Let the installer auto-partition a basic Linux layout 
-            								   (EFI, swap, root partition) with: sudo offline-install --disk /dev/sdX
-            								 - If disko has been configured, just run: sudo offline-install --host <name>
+	2. Edit /tmp/nix-cfg/configuration.nix if needed (e.g. for LUKS device)
 
-                          2. Edit /tmp/nix-cfg/configuration.nix if needed (e.g. for LUKS device)
+	3. Run: offline-install
 
-                          3. Run: offline-install
-
-                        The target host configuration is located at: /tmp/nix-cfg
+	The target host configuration is located at: /tmp/nix-cfg
           '';
 
           # Allow SSH in to run offline-install. The stock installer
