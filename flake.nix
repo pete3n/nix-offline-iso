@@ -120,7 +120,7 @@
 
 	2. Edit /tmp/nix-cfg/configuration.nix if needed (e.g. for LUKS device)
 
-	3. Run: offline-install
+	3. Run: sudo offline-install
 
 	The target host configuration is located at: /tmp/nix-cfg
           '';
