@@ -99,10 +99,21 @@
 
       # Shared ISO image module. `cfgDir` is copied to /iso/nix-cfg; the
       # installer copies it into /etc/nixos at install time.
+      #
+      # `includeSystemBuildDependencies` maps onto the iso-image option of the
+      # same name, which bakes the *installer system's own* build/derivation
+      # closure into the ISO store. Only the channels installer needs that:
+      # its target config is merged into the installer system, so the
+      # installer's build closure is how the target's build deps get baked.
+      # The flake installer bakes the target's build deps explicitly
+      # (targetToplevel.drvPath) and the installer itself is throwaway and
+      # never rebuilt, so shipping its build closure would only bloat the ISO
+      # and force realizing a second, unrelated build graph at ISO-build time.
       isoModule =
         {
           cfgDir,
           extraStoreContents,
+          includeSystemBuildDependencies,
         }:
         (
           { config, ... }:
@@ -115,7 +126,7 @@
                 }
               ];
               storeContents = [ config.system.build.toplevel ] ++ extraStoreContents;
-              includeSystemBuildDependencies = true;
+              inherit includeSystemBuildDependencies;
               squashfsCompression = "gzip -Xcompression-level 1";
             };
           }
@@ -143,6 +154,9 @@
             (isoModule {
               cfgDir = ./configs/channels;
               extraStoreContents = [ ];
+              # The merged installer+target system's build closure is the only
+              # mechanism that carries the channels target's build deps.
+              includeSystemBuildDependencies = true;
             })
           ];
         };
@@ -174,15 +188,10 @@
                 target "nixos" or expose a single configuration.
               '';
 
-          # Build the flake target WITH build dependencies in the toplevel
-          # closure (Linus Heckemann's include-build-dependencies technique) so
-          # the offline install can re-build the target after
-          # nixos-generate-config regenerates hardware-configuration.nix, which
-          # makes the installed system differ slightly from the pre-baked one.
-          targetToplevel =
-            (targetConfig.extendModules {
-              modules = [ { system.includeBuildDependencies = true; } ];
-            }).config.system.build.toplevel;
+          # Bake the committed config's own toplevel. The exact system that
+          # the install-time evaluation (config-copy.py) produces when
+          # hardware-configuration.nix is unchanged. 
+          targetToplevel = targetConfig.config.system.build.toplevel;
 
           # The target flake must ship a committed, git-tracked lock so its input
           # revisions can be pinned into the ISO for offline evaluation.
@@ -216,11 +225,7 @@
                   }
                   // (if node.locked ? lastModified then { inherit (node.locked) lastModified; } else { })
                   # Carry rev/revCount through the repin (path refs accept
-                  # them). nixpkgs derives system.nixos.versionSuffix from
-                  # self.shortRev, falling back to "dirty" — dropping rev made
-                  # the installed target evaluate a *different* toplevel
-                  # (…-dirty) than the ISO baked (…-<rev>), so every rebuild,
-                  # no-ops included, re-built the whole version-suffix cone.
+                  # them).
                   // (if node.locked ? rev then { inherit (node.locked) rev; } else { })
                   // (if node.locked ? revCount then { inherit (node.locked) revCount; } else { });
                 };
@@ -261,6 +266,11 @@
               # Bake the path-pinned copy (not ./configs/flake) so the installed
               # flake resolves nixpkgs from the store offline.
               cfgDir = flakeCfgDir;
+              # The installer is throwaway and never rebuilt; the target's
+              # build deps are baked explicitly below, so don't ship the
+              # installer's own build closure (it roughly doubles what the
+              # ISO build must realize, for paths nothing ever uses).
+              includeSystemBuildDependencies = false;
               extraStoreContents = [
                 # Built target system (runtime closure).
                 # Unchanged parts are a store copy.

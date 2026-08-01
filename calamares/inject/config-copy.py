@@ -74,15 +74,6 @@
 
         # If the copied config is a flake, build it in the LIVE (installer)
         # store and install the finished path with `nixos-install --system`.
-        #
-        # We deliberately do NOT use `nixos-install --flake`: that realizes the
-        # system into the empty target store, which offline cannot be populated
-        # (substituters are disabled), so it falls back to building the whole
-        # toolchain from source and fails fetching sources. Building here, in
-        # the live store, succeeds because every build input is already present
-        # on the ISO; `nixos-install --system` then just copies the closure to
-        # the target. The hostname entered in Calamares must match a
-        # nixosConfigurations.<name> attribute in the flake.
         if os.path.exists(os.path.join(root_mount_point, "etc/nixos/flake.nix")):
             _offline_etc = os.path.join(root_mount_point, "etc/nixos")
             # The offline ISO strips the Calamares hostname page, so nothing
@@ -139,15 +130,7 @@
                 )
             offline_system_path = _offline_build.stdout.strip()
             # Seed the target store with the flake's input source trees so the
-            # installed system can re-evaluate its own flake offline. The
-            # baked flake.lock pins every input to a /nix/store/*-source path
-            # that lives in the installer's store but is only consumed at
-            # *evaluation* time — it is not in the built system's runtime
-            # closure, so nixos-install will not copy it. Without these paths
-            # the first `nixos-rebuild switch` after reboot fails with
-            # `path '/nix/store/...-source' does not exist`. A bare path to
-            # `nix copy --to` is a chroot store rooted there, so this also
-            # registers the paths in the target's Nix DB.
+            # installed system can re-evaluate its own flake offline.
             _offline_lock = os.path.join(_offline_etc, "flake.lock")
             _offline_src_paths = []
             try:

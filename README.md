@@ -4,7 +4,6 @@ Build offline ISO images of the NixOS Calamares installer that include a
 user-provided system configuration that can be installed with **no network connection**, 
 by including all of its dependencies in the ISO's Nix store.
 
-Targets the **NixOS 26.05** `calamares-nixos-extensions`. 
 Two install types are supported:
 
 - **channels** - a plain `configuration.nix` (tracks a NixOS channel, no flake)
@@ -13,7 +12,7 @@ Two install types are supported:
 ## Usage
 
 1. [Install Nix](https://nixos.org/download) with flakes enabled on an online
-   build host with plenty of free disk (see below).
+   system with plenty of free disk (see below).
 2. Put your system config in either `configs/channels/` or `configs/flake/`.
    Keep the provided `hardware-configuration.nix` template. It is needed to build 
    the ISO closure and is overwritten by the real hardware scan at install time. 
@@ -136,8 +135,8 @@ You **must** commit a git-tracked `configs/flake/flake.lock` (generate it with
 revisions to pin. An untracked lock is invisible to the flake and the build will
 tell you it is missing.
 
-**After install**, the target's `/etc/nixos/flake.nix` is unchanged — it still
-carries your original `github:` input refs — but its `flake.lock` points every
+**After install**, the target's `/etc/nixos/flake.nix` is unchanged. It still
+carries your original `github:` input refs, but its `flake.lock` points every
 input at a store path. For online rebuilds later, run `nix flake update` to
 re-lock against the network.
 
