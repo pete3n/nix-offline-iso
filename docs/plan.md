@@ -23,8 +23,12 @@ from nixpkgs' `nixosSystem`, and `nixos-install`'s
 `nix-build '<nixpkgs/nixos>'` cannot resolve a `flake:` search-path entry
 without the flakes feature, which installer images leave disabled. The live
 environment now enables `nix-command`/`flakes` (resolution goes through the
-baked registry pin, no network). Note: the offline graphical branch is also
-flake-built and carries the same landmine for channels-mode installs.
+baked registry pin, no network). The offline graphical branch is NOT
+affected, verified by eval: its `offlineNixModule` has always enabled
+nix-command/flakes on the live environment. This branch only became exposed
+because phase 0 deleted that module — correctly dropping the offline
+substituter neutering, but silently dropping the feature enablement any
+flake-built Calamares ISO needs for module-mode `nixos-install`.
 
 Design anchors (settled in the 2026-08-01 grill session):
 
