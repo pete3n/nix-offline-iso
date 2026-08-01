@@ -1,9 +1,10 @@
-NixOS offline installer — manual partitioning
+NixOS proxied installer — manual partitioning
 =============================================
 
-`offline-install --disk /dev/sdX` makes a simple UNENCRYPTED layout. For an
-encrypted install, partition by hand with the commands below, then run
-`sudo offline-install` (no --disk) to install onto whatever you mounted at /mnt.
+`proxied-install --disk /dev/sdX` makes a simple UNENCRYPTED layout. For an
+encrypted install, partition by hand with the commands below, then continue
+the MOTD flow and run `sudo proxied-install` (no --disk) to install onto
+whatever you mounted at /mnt.
 
 Every tool used here is already on this ISO: parted, cryptsetup, lvm2, mkfs.*,
 mkswap, wipefs, blkid, lsblk.
@@ -56,7 +57,7 @@ swapon /dev/vg/swap
 Tell NixOS how to unlock the disk at boot
 -----------------------------------------
 
-`offline-install` runs `nixos-generate-config`, which inspects what you mounted
+`proxied-install` runs `nixos-generate-config`, which inspects what you mounted
 and fills in hardware-configuration.nix for you. From the layout above it
 records these automatically, with no edits from you:
 
@@ -80,9 +81,10 @@ Get that UUID — the LUKS *partition* /dev/sdX2, not the /dev/mapper device —
 
   blkid -s UUID -o value /dev/sdX2
 
-Then install:
+Then continue the MOTD flow — clone your config to /tmp/nix-cfg, edit it,
+`sudo proxy-setup` — and install:
 
-  sudo offline-install
+  sudo proxied-install
 
 
 Notes

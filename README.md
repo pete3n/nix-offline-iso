@@ -1,255 +1,111 @@
-# NixOS Offline ISO Builder (Determinate Nix, minimal CLI installer)
+# NixOS Proxied-Install ISO (Determinate Nix, minimal CLI installer)
 
-Build offline ISO images of a **minimal, console-based** NixOS installer that
-include a user-provided flake configuration that can be installed with **no
-network connection**, by including all of its dependencies in the ISO's Nix
-store.
-
-This branch (`nixos-26.05-cli-determinate`) ships **Determinate Nix** —
-[Determinate Systems'](https://determinate.systems) Nix distribution — as the
-Nix that runs on **both the live installer and the installed system**, while
-keeping the install fully offline. Only Determinate's offline-compatible core is
-used: FlakeHub Cache, `determinate-nixd login`, and telemetry are switched off
-for the install (see [Determinate Nix](#determinate-nix)).
-
-It is the CLI variant: there is no graphical installer; you install from a
-console with the `offline-install` script. (The graphical Calamares variant
-lives on the `nixos-26.05-graphical` branch; a plain-upstream-Nix CLI variant
-that also supports channels lives on `nixos-26.05-cli`.)
-
-Targets **NixOS 26.05**. Only the **flake** install type is supported on this
-branch: a `flake.nix` installed offline (see
-[Flake offline support](#flake-offline-support)). For the channels install type
-(a plain `configuration.nix`, no flake), use the `nixos-26.05-cli` branch.
+Builds an minimal CLI installer with Determinate Nix for networks whose only
+route to the internet is a proxy-cache.
 
 ## Usage
 
 1. [Install Nix](https://nixos.org/download) with flakes enabled on an online
-   build host with plenty of free disk (see below).
-2. Put your system config in `configs/flake/`. Keep the provided
-   `hardware-configuration.nix` template. It is needed to build the ISO closure
-   and is overwritten by the real hardware scan at install time. If there are
-   significant differences between the target hardware and the
-   `hardware-configuration.nix` template, then you may need to replace the template
-   config with the generated one so that the ISO includes necessary dependencies.
-   Your config imports `determinate.nixosModules.default` (see the example
-   `configs/flake/flake.nix`) so the installed system runs Determinate Nix.
-3. The `nixosConfigurations.<name>` attribute must match the installer hostname
-   (default `nixos`) or the `--host NAME` you pass to `offline-install`.
-4. If you changed `configs/flake/flake.nix`, regenerate and commit its lock
-   (`nix flake lock ./configs/flake && git add configs/flake/flake.lock`), then
-   re-lock the builder (`nix flake lock`). Build:
+system with plenty of free disk (see below).
 
+2. Build the ISO:
 ```
-nix build .#iso.flake-x86_64-linux
+nix build .#iso.x86_64-linux
 ```
 
-5. Write the ISO to disk with `dd` or an equivalent tool.
-6. Boot the target. At the console:
-   - **disko flake target?** Just run `sudo offline-install --host NAME`. disko
-     partitions, formats and mounts the disk(s) declared in your config (at
-     `/mnt`) — don't partition by hand or pass `--disk`. Pass `--no-disko` to opt
-     out and partition yourself.
-   - Otherwise: partition and mount your target at `/mnt` yourself, **or** let the
-     installer do a single disk: `offline-install --disk /dev/sdX` (GPT: 1024 MiB
-     ESP + ext4 root — **erases the disk**).
-   - Run `sudo offline-install`.
-   - For a **flake** target, pass `--host NAME` if your
-     `nixosConfigurations.<name>` isn't the default `nixos`.
+3. Write the ISO to disk with dd or an equivalent tool.
 
-   For an **encrypted** or otherwise custom layout, partition by hand before
-   running `offline-install` — run `partition-help` at the console for a
-   worked LUKS2 + LVM (encrypted root + swap) example. See
-   [Manual partitioning](#manual-partitioning-encrypted-root--swap).
+4. Boot the ISO and follow the instructions from the console.
 
-   The install may appear to sit for a long time while it builds and copies from
-   the store — that is expected.
+5. **Clone your Config repo**: `git clone <your-repo-url> /tmp/nix-cfg`
+
+6. **Edit** `/tmp/nix-cfg` if needed (hostname, LUKS device, hardware).
+
+7. **`sudo proxy-setup`** to confirm or replace the prefilled Cache URL
+   (`http://nix-proxy.lan`). It probes `<url>/nix-cache-info` and refuses to
+   proceed unless the answer looks like a Nix binary cache, then points the
+   live environment's substituters at the proxy and records the URL for the
+   installer. 
+
+8. **`sudo proxied-install`** builds and installs. Use `--host NAME` if
+   your `nixosConfigurations.<name>` isn't `nixos`, `--config DIR` if you
+   cloned somewhere other than `/tmp/nix-cfg`.
+
+- **Declare the Cache URL as the target's substituter**, e.g.
+
+  ```nix
+  nix.settings.substituters = [ "http://nix-proxy.lan" ];
+  ```
 
 ## How it works
 
-The installer is the stock NixOS **minimal** (console) image
-(`installation-cd-minimal`). There is no Calamares; the ISO simply ships the
-`offline-install` script (`cli/offline-install.sh`) and a login hint. When you
-run it, the script:
+`proxy-setup` (`cli/proxy-setup.sh`): validates the URL shape, probes
+`<url>/nix-cache-info`, then declares `substituters = <url>` in
+`/etc/nix/nix.custom.conf` and restarts `nix-daemon.service` 
+(which execs `determinate-nixd`).
 
-1. Runs `nixos-generate-config --root /mnt` and preserves the freshly generated
-   `hardware-configuration.nix`.
-2. Copies your files from `/tmp/nix-cfg` or `/iso/nix-cfg` into
-   `/mnt/etc/nixos`, then restores the generated `hardware-configuration.nix`.
-   Your config owns users and passwords (see
-   [Users and passwords](#users-and-passwords)).
-3. Builds the system **in the live installer store** via
-   `nix build …#…toplevel` and installs the finished path with
-   `nixos-install --system`, which just copies the closure to the target.
-   Building in the live store (not the empty target store) is what lets the
-   install succeed offline. The build runs through **`determinate-nixd`**, which
-   the Determinate module installs as the live installer's `nix-daemon`.
+`proxied-install` (`cli/proxied-install.sh`), in order:
 
-The installer is also configured to run nix **fully offline** during install
-(`nix.settings.substituters = [ ]` and `flake-registry = ""`). Without this, nix
-reaches out to `cache.nixos.org` (binary-cache probe) and `channels.nixos.org`
-(global flake registry) and fails with no network. Under Determinate these
-settings still apply: the Determinate module redirects the generated `nix.conf`
-to `/etc/nix/nix.custom.conf`, which `determinate-nixd` includes. Determinate
-additionally pins a *system* flake-registry entry for `nixpkgs` to a FlakeHub
-tarball, which `flake-registry = ""` does not cover, so the installer also forces
-`nix.registry = {}` (empty) — see [Determinate Nix](#determinate-nix). Because
-`nixos-generate-config` regenerates `hardware-configuration.nix` for the target
-machine at install time, the installed system differs slightly from what was
-pre-built, so a small rebuild must be performed. The ISO bakes the target's
-**build/derivation closure** so that the rebuild runs offline from sources
-already in the store.
-
-## Determinate Nix
-
-This branch replaces upstream Nix with **Determinate Nix** in two places:
-
-- **The live installer** — `flake.nix` imports `determinate.nixosModules.default`
-  into the installer image. Its `determinate-nixd` daemon does the install-time
-  build.
-- **The installed system** — `configs/flake/flake.nix` imports the same module,
-  so the machine you install runs Determinate Nix (flakes on by default,
-  `nix-command` enabled, `fh` available).
-
-Both pin Determinate to FlakeHub major version `3` (`.../determinate/3`); the
-committed locks record the exact release baked into the ISO.
-
-**Hard-neutered for offline.** Determinate is an online-first distribution
-(FlakeHub Cache, `determinate-nixd login`, telemetry). For the offline *install*
-none of that is used:
-
-- No cache substituter is configured (`determinate.edgeCacheSubstituters` is left
-  at its `null` default; the module adds no substituter on its own).
-- The installer forces `nix.settings.substituters = [ ]` and, because
-  Determinate's module pins a FlakeHub `nixpkgs` registry entry,
-  `nix.registry = {}` as well — so no bare flakeref resolution reaches the
-  network.
-
-What you keep is Determinate *Nix itself* — the improved daemon/binary — on both
-installer and target. FlakeHub Cache and `determinate-nixd login` remain
-available on the **installed** machine once it has network (the target keeps
-Determinate's registry pin; only the installer neuters it). `fh` is shipped in
-the installer for that later, online use — it does nothing during the offline
-install.
-
-> **Note:** whether `determinate-nixd` makes any background network attempt when
-> offline (and simply fails harmlessly) has not been fully verified on this
-> branch yet; the module exposes no explicit telemetry toggle in the pinned
-> version. See [`docs/adr/0001`](docs/adr/0001-determinate-nix-offline.md).
+1. Refuses to run without the recorded Cache URL (`--cache-url` overrides).
+2. Exports env-level `NIX_CONFIG` (`extra-experimental-features`,
+   `substituters = <Cache URL>`) so *every* nix it spawns substitutes
+   through the proxy regardless of which client reads which conf file. The
+   script's own `nix` is Determinate's client (it ships no upstream nix of
+   its own), but `nixos-install` bundles an upstream client internally, and
+   the env covers it too.
+3. Requires `flake.nix` in the config dir.
+4. **Pin match**: compares the config lock's `determinate` narHash against
+   `/etc/determinate-pin`; a mismatch warns (from-source build) and asks for
+   YES. Skipped with a note when there is no lock to read.
+5. One full evaluation answers two pre-flight questions: disko layout
+   (disko then owns partitioning) and declared substituters (warning above).
+6. Partitions (disko / `--disk` / you), runs `nixos-generate-config` for
+   non-disko targets (preserving the generated `hardware-configuration.nix`,
+   with the ESP-umask fix), copies the config to `/etc/nixos`.
+7. Builds `…#nixosConfigurations.<host>…toplevel` **in the live store** —
+   whose substituters point at the proxy — and installs the finished path
+   with `nixos-install --system … --no-channel-copy` (a flake-managed
+   system has no use for a root channel).
 
 ## Layout
 
 ```
-flake.nix                     ISO builder (Determinate installer + offline logic)
-cli/offline-install.sh        console installer script (shipped on the ISO)
+flake.nix                     thin ISO builder (Determinate live env)
+cli/proxy-setup.sh            Cache-URL probe + live substituter reroute
+cli/proxied-install.sh        console installer (shipped on the ISO)
 cli/partition-help.txt        manual partitioning cheat-sheet (`partition-help`)
-configs/
-  flake/                      example flake target (flake.nix + configuration.nix)
+tools/test-proxied-install.sh component test (mock appliance)
+docs/appliance-requirements.md  what the Cache proxy must additionally serve
+docs/adr/0003-*.md            why this ISO bakes nothing and owns no URLs
+docs/plan.md                  the implementation plan this branch followed
 ```
 
 ## Manual partitioning (encrypted root + swap)
 
-`offline-install --disk` only makes a simple unencrypted layout. For an
-encrypted install, manually partition and then run `offline-install`.  
-Run **`partition-help`** at the console (or read [`cli/partition-help.txt`](cli/partition-help.txt))
-to view example instructions for partitioning, formatating, and created LUKS 
-encrypted volumes.
+`proxied-install --disk` only makes a simple unencrypted layout. For an
+encrypted install, partition by hand first — run **`partition-help`** at the
+console (or read [`cli/partition-help.txt`](cli/partition-help.txt)) for a
+worked LUKS2 + LVM example.
 
-`offline-install` runs `nixos-generate-config`, which auto-detects the
-filesystems and swap. It does **not** detect the LUKS layer beneath LVM, so you
-must declare the unlock device yourself. Because this installer regenerates
-`hardware-configuration.nix` at install time, put it in your
-**`configuration.nix`** (which is preserved), not the hardware file:
+`proxied-install` runs `nixos-generate-config`, which auto-detects
+filesystems and swap but **not** the LUKS layer beneath LVM. Declare the
+unlock device in your **`configuration.nix`** (which is preserved), not the
+hardware file (which is regenerated at install time):
 
 ```nix
 boot.initrd.luks.devices."cryptroot".device =
   "/dev/disk/by-uuid/<UUID of the LUKS partition>";
 ```
 
-(If you skip LVM and put ext4 directly on the LUKS device,
-`nixos-generate-config` *does* add that entry for you (see the notes in
-`partition-help`).
-
-### Users and passwords
-
-The provided `configuration.nix` sets users and their passwords.
-**Set a password in your config** (e.g. `users.users.<name>.initialPassword`,
-`hashedPassword`, or `hashedPasswordFile`, and for `root` if you want root
-login). The example config uses `initialPassword = "test"` for `root` and
-`tester`. You can log in as `tester` / `test`.
-
-### Dynamic configuration
-
-At boot the live installer seeds a **writable copy** of the baked `/iso/nix-cfg`
-into `/tmp/nix-cfg` (the baked copy is read-only iso9660). Edit
-`/tmp/nix-cfg/configuration.nix` from the console before running
-`offline-install`, for example to add a `boot.initrd.luks.devices` entry for an
-encrypted disk. `offline-install` prefers `/tmp/nix-cfg` over `/iso/nix-cfg`, so
-your edits are what gets installed; the seed only runs when `/tmp/nix-cfg`
-doesn't already exist, so a hand-made copy is never clobbered. Remember you can
-safely remove items from a configuration, but if your edits add dependencies
-that aren't in the ISO store, the offline install will fail.
-
-## Flake offline support
-
-Offline flake installs require several workarounds (see
-[nix#8953](https://github.com/NixOS/nix/issues/8953)):
-
-1. **Evaluate offline** by pinning *every* input to a store path. At ISO-build
-   time the builder bakes a *copy* of your flake with a rewritten `flake.lock`:
-   for each input it reads your committed lock, fetches that input's source, and
-   repoints the input's `locked` ref to the resulting `/nix/store/…` path. Your
-   `flake.nix` is copied verbatim — `inputs` and `outputs` are untouched — so
-   `follows` edges (e.g. `disko` following `nixpkgs`) keep working. An `original`
-   ref with a `path` `locked` needs no registry and no network: Nix reuses the
-   lock without re-fetching and resolves each source from the store. This holds
-   regardless of the original fetch type, so it works for the whole Determinate
-   input tree — `github`, FlakeHub `tarball` inputs (`determinate`, its `nix`,
-   `nixpkgs-weekly`, …), and the `file` inputs (the `determinate-nixd` binaries)
-   are all repinned the same way.
-
-2. **Build offline** in the live installer store, then pass the finished path to
-   `nixos-install --system`, which just copies the closure to the target. The
-   installer hostname (or `--host`) must match a `nixosConfigurations.<name>`
-   attribute in the flake. The ISO bakes exactly one config's closure: the entry
-   named `nixos`, or the sole entry if there is only one.
-
-3. **Bake the inputs** into the closure. The ISO store carries the target
-   system's built closure, its derivation closure (`.drv`s + source tarballs, for
-   the hardware-config rebuild), and the source tree of every flake input.
-
-You **must** commit a git-tracked `configs/flake/flake.lock` (generate it with
-`nix flake lock ./configs/flake`); the builder reads it to learn which input
-revisions to pin. On this branch that lock includes `determinate` and its whole
-transitive tree, so the builder bakes several source trees (Determinate's nix
-source, `nixpkgs-weekly`, the `determinate-nixd` binaries, plus your own
-`nixpkgs`). An untracked lock is invisible to the flake and the build will tell
-you it is missing.
-
-**After install**, the target's `/etc/nixos/flake.nix` is unchanged — it still
-carries your original input refs (`github:` / FlakeHub `https://flakehub.com/…`)
-— but its `flake.lock` points every input at a store path. For online rebuilds
-later, run `nix flake update` to re-lock against the network.
-
 ### disko targets
 
-If your flake config imports [disko](https://github.com/nix-community/disko)
-and declares a `disko.devices` layout, `offline-install` uses it: the builder
-bakes the config's `system.build.diskoScript` (and its closure) into the ISO,
-and at install time the script runs disko to wipe, partition, format and mount
-the declared disk(s) at `/mnt`, then installs. It does **not** run
-`nixos-generate-config` for a disko target, because disko already owns the
-`fileSystems` config — running both would define `fileSystems."/"` twice and
-fail evaluation. Keep filesystem-independent hardware bits (kernel modules,
-`nixpkgs.hostPlatform`) in your committed `hardware-configuration.nix`; it is
-used as-is. Use `--no-disko` to partition/mount yourself while still letting
-disko own `fileSystems`.
-
-### Free disk space
-
-The ISO is large (depending on the config) — though smaller than the graphical
-variant since there is no desktop. Determinate adds to it: its module bakes the
-Determinate Nix package plus several full source trees from its input tree
-(see [Flake offline support](#flake-offline-support)), so expect a noticeably
-larger ISO and a long first build. Keep ~3× the ISO size free on the build
-host's Nix store partition.
+If your config imports [disko](https://github.com/nix-community/disko) and
+declares a `disko.devices` layout, `proxied-install` builds the config's
+`system.build.diskoScript` at install time (fetching through the proxy as
+needed) and runs it to wipe, partition, format and mount the declared
+disk(s) at `/mnt`. It does **not** run `nixos-generate-config` for a disko
+target — disko owns the `fileSystems` config, and defining
+`fileSystems."/"` twice fails evaluation. Keep filesystem-independent
+hardware bits (kernel modules, `nixpkgs.hostPlatform`) in your committed
+`hardware-configuration.nix`. `--no-disko` partitions/mounts yourself while
+disko still owns `fileSystems`.

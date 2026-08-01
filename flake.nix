@@ -1,21 +1,14 @@
 {
-  description = "NixOS offline ISO builder — minimal CLI installer (Determinate Nix)";
+  description = "NixOS proxied-install ISO — minimal CLI installer (Determinate Nix)";
 
   inputs = {
 		# Still using community nixpkgs vs. flakehub
     nixpkgs.url = "github:nixos/nixpkgs/nixos-26.05";
 
-    # The flake target, included as an input so its system closure and input
-    # source trees can be pulled into the ISO store for offline install.
-    # The target pins its own nixpkgs (and any other inputs) via its
-    # committed flake.lock which gets baked into the ISO.
-    target-flake.url = "path:./configs/flake";
-
-    # Determinate Nix for the live installer itself (the target gets it via
-    # configs/flake). Pinned to major version 3, same line the target pins, so
-    # both bake the same Determinate release. Its module replaces the installer's
-    # nix-daemon with determinate-nixd, so all install-time builds run through
-    # Determinate Nix.
+    # Determinate Nix for the live installer. Pinned to major version 3. Its
+    # module replaces the installer's nix-daemon with determinate-nixd, so all
+    # install-time builds run through Determinate Nix. The Target gets its own
+    # Determinate from its Config repo's pin (see Pin match in CONTEXT.md).
     determinate.url = "https://flakehub.com/f/DeterminateSystems/determinate/3";
   };
 
@@ -23,10 +16,9 @@
     {
       self,
       nixpkgs,
-      target-flake,
       determinate,
       ...
-    }@inputs:
+    }:
     let
       systems = [
         "x86_64-linux"
@@ -34,51 +26,57 @@
       ];
       forAllSystems = nixpkgs.lib.genAttrs systems;
 
-      # Force the installer's nix to run offline (no cache.nixos.org probe, no
-      # global flake-registry fetch), and enable flakes for the flake install.
-      # Under Determinate these nix.settings still apply: the determinate module
-      # redirects the NixOS-generated nix.conf to /etc/nix/nix.custom.conf, which
-      # determinate-nixd includes, so the empty substituters/registry bind the
-      # Determinate daemon too.
-      offlineNixModule =
-        { lib, ... }:
-        {
-          nix.settings = {
-            experimental-features = [
-              "nix-command"
-              "flakes"
-            ];
-            substituters = lib.mkForce [ ];
-            trusted-substituters = lib.mkForce [ ];
-            # Empty string disables fetching the global flake registry.
-            flake-registry = "";
-          };
+      # The ISO's `determinate` lock identity, exposed on the live env for the
+      # Pin match check (see CONTEXT.md): a Config repo pinning this narHash
+      # installs Determinate's nix straight from the installer's store. The
+      # narHash is the identity — tarball lock nodes carry no git rev, and the
+      # URL may legitimately differ (e.g. appliance-routed) while the content
+      # matches.
+      rootLock = builtins.fromJSON (builtins.readFile ./flake.lock);
+      determinatePin =
+        # A directly-declared input, so the root node maps it to a node name
+        # (follows-lists only appear for overridden inputs).
+        rootLock.nodes.${rootLock.nodes.${rootLock.root}.inputs.determinate}.locked;
 
-          # Determinate's module pins a system registry entry for `nixpkgs`
-          # pointing at a FlakeHub tarball (modules/nixos.nix), which is a
-          # network resolution path that flake-registry = "" does not cover.
-          # For the offline installer, force the whole system registry empty so
-          # no bare flakeref resolution can reach out. (This is installer-only
-          # the installed target keeps Determinate's registry pin, which is the
-          # normal, desirable behaviour once it has network.)
-          nix.registry = lib.mkForce { };
-        };
-
-      # The CLI installer: the offline-install script + a login hint.
-      offlineInstaller =
+      # The CLI installer: gate on proxy-setup's recorded Cache URL, run the
+      # pre-flight checks (Pin match, declared substituters), then build the
+      # cloned Flake target through the Cache proxy and install it.
+      proxiedInstaller =
         pkgs:
         pkgs.writeShellApplication {
-          name = "offline-install";
+          name = "proxied-install";
+          # No pkgs.nix here on purpose: the script's `nix` resolves to
+          # Determinate's client from the system path, matching the daemon.
+          # The upstream client warned "unknown setting" on every run —
+          # determinate-nixd writes its own settings (lazy-trees, eval-cores)
+          # into the /etc/nix/nix.conf it generates — and never reliably read
+          # nix.custom.conf. nixos-install still bundles an upstream nix
+          # internally; the script's NIX_CONFIG env covers it.
           runtimeInputs = [
             pkgs.coreutils
+            pkgs.gnugrep
             pkgs.util-linux
             pkgs.parted
             pkgs.dosfstools
             pkgs.e2fsprogs
             pkgs.nixos-install-tools
-            pkgs.nix
           ];
-          text = builtins.readFile ./cli/offline-install.sh;
+          text = builtins.readFile ./cli/proxied-install.sh;
+        };
+
+      # Step 4 of the Proxied install: gate on the Reachability probe and
+      # declare the Cache URL as the live env's substituter (CONTEXT.md:
+      # Proxy setup). proxied-install refuses to run before it.
+      proxySetup =
+        pkgs:
+        pkgs.writeShellApplication {
+          name = "proxy-setup";
+          runtimeInputs = [
+            pkgs.coreutils
+            pkgs.curl
+            pkgs.gnugrep
+          ];
+          text = builtins.readFile ./cli/proxy-setup.sh;
         };
 
       # A console cheat-sheet of manual partitioning commands (encrypted root +
@@ -95,62 +93,83 @@
       installerModule =
         { pkgs, lib, ... }:
         {
+          nix.settings = {
+            # The install-time `nix eval`/`nix build` calls are flakes-based.
+            # Enable the features for every client in the live env — Determinate
+            # defaults them on only for its own client, and the install script
+            # also drives the upstream nix from its runtimeInputs.
+            experimental-features = [
+              "nix-command"
+              "flakes"
+            ];
+            # Empty until `proxy-setup` declares the Cache URL: on the filtered
+            # network the stock default (cache.nixos.org) is a blackhole, so a
+            # nix command run before setup should fail fast, not hang. This is
+            # route ownership, not the offline branches' guard idiom — the
+            # Target's substituters come from its own Config repo. mkForce
+            # because list settings merge: a bare [] concatenates with the
+            # default definition instead of replacing it.
+            substituters = lib.mkForce [ ];
+          };
+
           environment.systemPackages = [
-            (offlineInstaller pkgs)
+            (proxiedInstaller pkgs)
+            (proxySetup pkgs)
             (partitionHelp pkgs)
             pkgs.cryptsetup
             pkgs.lvm2
             pkgs.tmux
             pkgs.fh
+            # The Config-repo flow: clone over LAN git/SSH, then edit on the
+            # spot (nano is present via its default-enabled NixOS module).
+            pkgs.git
+            pkgs.openssh
+            pkgs.vim
           ];
 
           boot.zfs.forceImportRoot = false;
           networking.wireless.enable = lib.mkForce false;
           networking.networkmanager.enable = true;
 
-          # Seed a writable copy of the baked config into /tmp/nix-cfg at boot.
-          systemd.services.seed-nix-cfg = {
-            description = "Seed an editable config copy into /tmp/nix-cfg";
-            wantedBy = [ "multi-user.target" ];
-            path = [ pkgs.coreutils ];
-            unitConfig = {
-              RequiresMountsFor = "/iso";
-              ConditionPathExists = [
-                "/iso/nix-cfg"
-                "!/tmp/nix-cfg"
-              ];
-            };
-            serviceConfig = {
-              Type = "oneshot";
-              RemainAfterExit = true;
-            };
-            script = ''
-              cp -rT /iso/nix-cfg /tmp/nix-cfg
-              chmod -R u+w /tmp/nix-cfg
-            '';
-          };
-
           # Shown at the console login of the live installer.
           users.motd = lib.mkForce ''
-	NixOS offline installer
+	NixOS proxied installer (Determinate Nix)
 
 	Keyboard not US-QWERTY? Change the console layout, e.g. loadkeys dvorak
 	(back to QWERTY: loadkeys us  |  list layouts: localectl list-keymaps)
 
-	1. Partition and mount your target at /mnt
-		- For help with partitioning commands run: partition-help
-		- Let the installer auto-partition a basic Linux layout 
-		 (EFI, swap, root partition) with: sudo offline-install --disk /dev/sdX
-		- If disko has been configured, just run: sudo offline-install --host <name>
+	1. Partition, format and mount your target at /mnt
+		- For help with manual partitioning commands run: partition-help
+		- Or skip this step: --disk auto-partitions a basic Linux layout
+		 (EFI, swap, root), and a disko config partitions itself at install
 
-	2. Edit /tmp/nix-cfg/configuration.nix if needed (e.g. for LUKS device)
+	2. Clone your configuration:  git clone <your-repo-url> /tmp/nix-cfg
 
-	3. Run: sudo offline-install
+	3. Edit /tmp/nix-cfg if needed (hardware, hostname, LUKS device)
 
-	The target host configuration is located at: /tmp/nix-cfg
+	4. Point Nix at the Cache proxy:  sudo proxy-setup
+
+	5. Install:  sudo proxied-install
+		- auto-partition + install:  sudo proxied-install --disk /dev/sdX
+		- pick a config by name:  sudo proxied-install --host <name>
+
+	This ISO's Determinate pin is at /etc/determinate-pin — your config's
+	flake.lock should pin the same narHash, or the install compiles Nix
+	from source through the proxy.
           '';
 
-          # Allow SSH in to run offline-install. The stock installer
+          # The ISO's determinate pin, readable at the prompt and parseable by
+          # the installer's Pin match check.
+          environment.etc."determinate-pin".text = ''
+            # The `determinate` input this ISO was built with. A Config repo
+            # whose flake.lock pins the same narHash installs Determinate's nix
+            # from this ISO's store; any other pin compiles it from source
+            # through the Cache proxy (long build).
+            narHash: ${determinatePin.narHash}
+            url: ${determinatePin.url}
+          '';
+
+          # Allow SSH in to run the installer. The stock installer
           # enables sshd but leaves root key-only with no password; set one here.
           # These credentials are for the throwaway installer environment only.
           services.openssh.enable = true;
@@ -162,186 +181,45 @@
           # users.users.root.openssh.authorizedKeys.keys = [ "ssh-ed25519 AAAA... you@host" ];
         };
 
-      # Shared ISO image module. `cfgDir` is copied to /iso/nix-cfg; the
-      # offline-install script copies it into /etc/nixos at install time.
-      isoModule =
+      # ISO image tuning. The image carries only the live installer system —
+      # no target closure, no baked config; the explicit storeContents just
+      # restates the default (the live toplevel) for clarity.
+      isoImageModule =
+        { config, ... }:
         {
-          cfgDir,
-          extraStoreContents,
-        }:
-        (
-          { config, ... }:
-          {
-            isoImage = {
-              contents = [
-                {
-                  source = cfgDir;
-                  target = "/nix-cfg";
-                }
-              ];
-              storeContents = [ config.system.build.toplevel ] ++ extraStoreContents;
-              includeSystemBuildDependencies = false;
-              squashfsCompression = "gzip -Xcompression-level 1";
-            };
-          }
-        );
+          isoImage = {
+            storeContents = [ config.system.build.toplevel ];
+            includeSystemBuildDependencies = false;
+            squashfsCompression = "gzip -Xcompression-level 1";
+          };
+        };
 
       baseInstaller = "${nixpkgs}/nixos/modules/installer/cd-dvd/installation-cd-minimal.nix";
 
-      # Flake installer. Bakes a copy of the target flake whose every input is
-      # pinned to a store path (via a rewritten lock) so it evaluates offline,
-      # plus the target's built + derivation closures and each input's source.
-      #
-      # Reads the target's own committed flake.lock and, for each input,
-      # swaps its `locked` ref for the store path of that input's source.
-      mkFlakeInstaller =
+      mkInstaller =
         system:
-        let
-          pkgs = nixpkgs.legacyPackages.${system};
-
-          # Pick which nixosConfiguration's closure to bake. At install time the
-          # script selects a config by hostname (--host), but the ISO must bake
-          # exactly one config's closure so the offline build finds its store
-          # paths.
-          targetConfigs = target-flake.nixosConfigurations;
-          targetNames = builtins.attrNames targetConfigs;
-          targetConfig =
-            if targetConfigs ? nixos then
-              targetConfigs.nixos
-            else if builtins.length targetNames == 1 then
-              targetConfigs.${builtins.head targetNames}
-            else
-              throw ''
-                nix-offline-iso: configs/flake exposes multiple nixosConfigurations
-                (${builtins.concatStringsSep ", " targetNames}) and none named "nixos".
-                The ISO bakes exactly one config's closure, so name your install
-                target "nixos" or expose a single configuration.
-              '';
-
-          # The installed target must evaluate the SAME toplevel it boots, or a
-          # no-change `nixos-rebuild` stops being a no-op and tries to realize a
-          # *different* system offline. So the offline-rebuild dependency set is
-          # declared in the committed target config itself (system.extraDependencies
-          # in configs/flake/configuration.nix), NOT injected here at build time.
-          # We bake exactly that config's toplevel — the one the installer installs
-          # and the target later re-evaluates — keeping installed == evaluated ==
-          # baked. (An earlier version injected the deps only here via
-          # extendModules; the installed system then diverged from what the target
-          # evaluated, so every rebuild rebuilt from scratch and reached the network
-          # — e.g. fetching the Python source tarball.)
-          targetToplevel = targetConfig.config.system.build.toplevel;
-
-          # If the target declares a disko layout, bake its partition/format/mount
-          # script (and its runtime closure) into the ISO store so offline-install
-          # can partition the disk fully offline. `system.build.diskoScript` only
-          # exists when the disko module is imported, so guard on its presence and
-          # contribute nothing for a plain (non-disko) target.
-          diskoStoreContents =
-            if targetConfig.config.system.build ? diskoScript then
-              [ targetConfig.config.system.build.diskoScript ]
-            else
-              [ ];
-
-          # The target flake must ship a committed lock and must fetch the revs.
-          # It must also be git-tracked to be visible to Nix.
-          targetLockPath = ./configs/flake/flake.lock;
-          rawLock =
-            if builtins.pathExists targetLockPath then
-              builtins.fromJSON (builtins.readFile targetLockPath)
-            else
-              throw ''
-                nix-offline-iso: configs/flake/flake.lock is missing. The flake
-                target must carry a committed, git-tracked lock so its inputs can
-                be pinned into the ISO for offline install. Generate it with:
-                  nix flake lock ./configs/flake && git add configs/flake/flake.lock
-              '';
-
-          # Fetch each input's source (online, at ISO-build time) and repin its
-          # `locked` ref to that store path. `lastModified` is stripped from the
-          # fetch args (it is an output of fetchTree, not an accepted input) but
-          # kept in the rewritten node.
-          pinNode =
-            _name: node:
-            if node ? locked then
-              let
-                fetched = fetchTree (removeAttrs node.locked [ "lastModified" ]);
-              in
-              {
-                value = node // {
-                  locked = {
-                    type = "path";
-                    path = fetched.outPath;
-                    narHash = fetched.narHash;
-                  }
-                  // (if node.locked ? lastModified then { inherit (node.locked) lastModified; } else { })
-                  # Carry rev/revCount through the repin (path refs accept
-                  # them). nixpkgs derives system.nixos.versionSuffix from
-                  # self.shortRev, falling back to "dirty" — dropping rev made
-                  # the installed target evaluate a *different* toplevel
-                  # (…-dirty) than the ISO baked (…-<rev>), so every rebuild,
-                  # no-ops included, re-built the whole version-suffix cone.
-                  // (if node.locked ? rev then { inherit (node.locked) rev; } else { })
-                  // (if node.locked ? revCount then { inherit (node.locked) revCount; } else { });
-                };
-                source = fetched.outPath;
-              }
-            else
-              {
-                value = node;
-                source = null;
-              };
-
-          pinned = builtins.mapAttrs pinNode rawLock.nodes;
-          offlineLock = builtins.toJSON (
-            rawLock // { nodes = builtins.mapAttrs (_name: entry: entry.value) pinned; }
-          );
-          # Every input source, to seed into the ISO store for the offline build.
-          inputSources = builtins.filter (path: path != null) (
-            map (entry: entry.source) (builtins.attrValues pinned)
-          );
-
-          flakeCfgDir = pkgs.runCommand "offline-flake-cfg" { } ''
-            cp -r ${./configs/flake} $out
-            chmod -R u+w $out
-            cp ${pkgs.writeText "flake.lock" offlineLock} $out/flake.lock
-            chmod u+w $out/flake.lock
-          '';
-        in
         nixpkgs.lib.nixosSystem {
           inherit system;
-          specialArgs = { inherit inputs; };
           modules = [
             # Determinate Nix in the live installer: replaces nix-daemon with
             # determinate-nixd so install-time builds run through Determinate.
-            # offlineNixModule comes after so its mkForce offline settings win.
             determinate.nixosModules.default
-            offlineNixModule
             installerModule
             baseInstaller
-            (isoModule {
-              cfgDir = flakeCfgDir;
-              extraStoreContents = [
-                targetToplevel
-                targetToplevel.drvPath
-              ]
-              ++ diskoStoreContents
-              ++ inputSources;
-            })
+            isoImageModule
           ];
         };
 
-      flakeConfigs = forAllSystems (system: mkFlakeInstaller system);
+      installerConfigs = forAllSystems mkInstaller;
     in
     {
-      # nixosConfigurations, per system (flake target only on this branch).
+      # nixosConfigurations, per system.
       nixosConfigurations = nixpkgs.lib.mapAttrs' (
-        system: cfg: nixpkgs.lib.nameValuePair "flake-${system}" cfg
-      ) flakeConfigs;
+        system: cfg: nixpkgs.lib.nameValuePair "installer-${system}" cfg
+      ) installerConfigs;
 
       # ISO image:
-      #   nix build .#iso.flake-x86_64-linux
-      iso = nixpkgs.lib.mapAttrs' (
-        system: cfg: nixpkgs.lib.nameValuePair "flake-${system}" cfg.config.system.build.isoImage
-      ) flakeConfigs;
+      #   nix build .#iso.x86_64-linux
+      iso = nixpkgs.lib.mapAttrs (_system: cfg: cfg.config.system.build.isoImage) installerConfigs;
     };
 }
