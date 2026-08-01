@@ -45,6 +45,4 @@
   networking.useDHCP = lib.mkDefault true;
 
   nixpkgs.hostPlatform = lib.mkDefault "x86_64-linux";
-  # Microcode / CPU-vendor specifics intentionally omitted from the placeholder;
-  # the real scan adds them at install time.
 }

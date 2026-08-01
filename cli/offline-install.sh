@@ -230,12 +230,8 @@ fi
 
 # Seed the target store with the flake's input source trees so the installed
 # system can re-evaluate its own flake offline. The baked flake.lock pins every
-# input to a /nix/store/*-source path that lives in THIS installer's store (it
-# was seeded into the ISO) but is only consumed at *evaluation* time — it is not
-# part of the built system's runtime closure, so `nixos-install --system` above
-# did not copy it. Without these paths on the target, `nixos-rebuild switch`
-# after reboot fails with `path '/nix/store/...-source' does not exist` the
-# moment it tries to read the flake inputs. Copy those source closures now.
+# input to a /nix/store/*-source path that lives in this installer's store (it
+# was seeded into the ISO) but is only consumed at evaluation time.
 if [ -e "$ROOT/etc/nixos/flake.nix" ]; then
   echo ">> Copying flake input sources into the target store (for offline rebuilds)"
   # Pull every path-pinned input out of the baked lock. Non-path nodes (and the

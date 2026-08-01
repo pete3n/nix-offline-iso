@@ -1,25 +1,5 @@
 #!/usr/bin/env bash
-# test-offline-rebuild.sh — regression test for the offline-rebuild contract:
-# "a config-only change rebuilds on the installed target with no network".
-#
-# How it works: build the committed system (exactly what the ISO bakes), seed
-# its closure into a throwaway chroot store (exactly what nixos-install copies
-# onto the target), then rebuild perturbed copies of the config against that
-# store with --offline. A FAIL here is the same failure the real target would
-# hit after reboot — caught in seconds, without an ISO build + VM cycle.
-#
-# Covers both target types of this branch:
-#   flake:    configs/flake     nix build path:...#nixosConfigurations...
-#   channels: configs/channels  nix-build '<nixpkgs/nixos>' -A system, pinned
-#             to the builder flake's locked nixpkgs. The channels base is
-#             built the same way its probe rebuilds are, so the perturbation
-#             cone — the thing the dep list must cover — is exercised
-#             faithfully, even though version-suffix plumbing differs slightly
-#             from the flake-evaluated toplevel the ISO bakes.
-#
-# Run on the build machine (needs network for the initial base builds, and jq).
-#
-# Usage: tools/test-offline-rebuild.sh
+# Regression test for the offline-rebuild contract
 set -euo pipefail
 
 script_dir=$(cd "$(dirname "$0")" && pwd)
@@ -43,8 +23,8 @@ trap cleanup EXIT
 
 overall=0
 
-# Each case is a sed program applied to a fresh copy of a committed config —
-# a stand-in for "the user edits configuration.nix on the installed system".
+# Each case is a sed program applied to a fresh copy of a committed config.
+# A stand-in for "the user edits configuration.nix on the installed system".
 # $1 case label, $2 source config dir, $3 sed program; remaining args are the
 # offline build command, which references the perturbed copy in $cfg_dir.
 run_case() {
@@ -68,9 +48,9 @@ run_case() {
   fi
 }
 
-# The five config-change classes of the offline contract. sshd-disable is the
-# only one that changes systemPackages *membership*, which rebuilds system-path
-# itself (and the dbus config that embeds it) — it has caught the most, keep it.
+# Tests five config-change classes. sshd-disable is the
+# only one that changes systemPackages membership, which rebuilds system-path
+# itself (and the dbus config that embeds it).
 all_cases() {
   local src_dir=$1 prefix=$2
   shift 2
@@ -78,13 +58,12 @@ all_cases() {
   run_case "$prefix-timezone" "$src_dir" 's|time.timeZone = "America/New_York"|time.timeZone = "America/Chicago"|' "$@"
   run_case "$prefix-bootloader" "$src_dir" 's|boot.loader.systemd-boot.enable = true;|boot.loader.systemd-boot.enable = true;\n  boot.loader.systemd-boot.configurationLimit = 7;|' "$@"
   # Toggling a service whose package is already in the closure (fstrim ships in
-  # util-linux) — the "enable a baked service" leg of the contract.
+  # util-linux)
   run_case "$prefix-service" "$src_dir" 's|networking.networkmanager.enable = true;|networking.networkmanager.enable = true;\n  services.fstrim.enable = true;|' "$@"
   # The sed targets the four-space-indented `enable = true;` in services.openssh.
   run_case "$prefix-sshd-disable" "$src_dir" 's|^    enable = true;|    enable = false;|' "$@"
 }
 
-# ---- flake target ------------------------------------------------------------
 if [ -e "$flake_dir/flake.nix" ]; then
   echo ">> [flake] building the committed toplevel (what the ISO bakes)"
   flake_top=$(nix build --no-link --print-out-paths "path:$flake_dir#$flake_attr")
@@ -94,14 +73,13 @@ if [ -e "$flake_dir/flake.nix" ]; then
   nix copy --no-check-sigs --to "local?root=$flake_store" "$flake_top"
   echo "   simulated target store size: $(du -sh "$flake_store/nix/store" | cut -f1)"
   # --builders '': the target has no remote builders, so the probe must not use
-  # the dev machine's either — a reachable builder would realize the missing
+  # the dev machine's either. A reachable builder would realize the missing
   # paths remotely and mask a real on-target failure.
   all_cases "$flake_dir" flake \
     nix build --store "local?root=$flake_store" --offline --no-link \
       --builders '' "path:$cfg_dir#$flake_attr"
 fi
 
-# ---- channels target ----------------------------------------------------------
 if [ -e "$channels_dir/configuration.nix" ]; then
   echo ">> [channels] resolving the builder flake's pinned nixpkgs"
   np_rev=$(jq -r '.nodes.nixpkgs.locked.rev' "$repo_root/flake.lock")

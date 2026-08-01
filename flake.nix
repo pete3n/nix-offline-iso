@@ -275,12 +275,7 @@
                     narHash = fetched.narHash;
                   }
                   // (if node.locked ? lastModified then { inherit (node.locked) lastModified; } else { })
-                  # Carry rev/revCount through the repin (path refs accept
-                  # them). nixpkgs derives system.nixos.versionSuffix from
-                  # self.shortRev, falling back to "dirty" — dropping rev made
-                  # the installed target evaluate a *different* toplevel
-                  # (…-dirty) than the ISO baked (…-<rev>), so every rebuild,
-                  # no-ops included, re-built the whole version-suffix cone.
+                  # Carry rev/revCount through the repin
                   // (if node.locked ? rev then { inherit (node.locked) rev; } else { })
                   // (if node.locked ? revCount then { inherit (node.locked) revCount; } else { });
                 };

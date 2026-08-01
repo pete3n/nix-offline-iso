@@ -5,19 +5,15 @@ include a user-provided system configuration that can be installed with **no
 network connection**, by including all of its dependencies in the ISO's Nix
 store.
 
-This is the CLI variant. There is no graphical installer; you install from a
-console with the `offline-install` script. (The graphical Calamares variant
-lives on the `nixos-26.05-graphical` branch.)
-
-Targets **NixOS 26.05**. Two install types are supported:
+Two install types are supported:
 
 - **channels** - a plain `configuration.nix` (tracks a NixOS channel, no flake)
 - **flake** - a `flake.nix` (installed offline; see [Flake offline support](#flake-offline-support))
 
 ## Usage
 
-1. [Install Nix](https://nixos.org/download) with flakes enabled on an online
-   build host with plenty of free disk (see below).
+1. [Install Nix](https://nixos.org/download) with flakes enabled on an online 
+   system with plenty of free disk (see below).
 2. Put your system config in either `configs/channels/` or `configs/flake/`.
    Keep the provided `hardware-configuration.nix` template. It is needed to build
    the ISO closure and is overwritten by the real hardware scan at install time.
@@ -38,25 +34,7 @@ nix build .#iso.flake-x86_64-linux
 ```
 
 5. Write the ISO to disk with `dd` or an equivalent tool.
-6. Boot the target. At the console:
-   - **disko flake target?** Just run `sudo offline-install --host NAME`. disko
-     partitions, formats and mounts the disk(s) declared in your config (at
-     `/mnt`) — don't partition by hand or pass `--disk`. Pass `--no-disko` to opt
-     out and partition yourself.
-   - Otherwise: partition and mount your target at `/mnt` yourself, **or** let the
-     installer do a single disk: `offline-install --disk /dev/sdX` (GPT: 1024 MiB
-     ESP + ext4 root — **erases the disk**).
-   - Run `sudo offline-install`.
-   - For a **flake** target, pass `--host NAME` if your
-     `nixosConfigurations.<name>` isn't the default `nixos`.
-
-   For an **encrypted** or otherwise custom layout, partition by hand before
-   running `offline-install` — run `partition-help` at the console for a
-   worked LUKS2 + LVM (encrypted root + swap) example. See
-   [Manual partitioning](#manual-partitioning-encrypted-root--swap).
-
-   The install may appear to sit for a long time while it builds and copies from
-   the store — that is expected.
+6. Boot the target and follow the instructions from the console.
 
 ## How it works
 
