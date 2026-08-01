@@ -135,13 +135,6 @@ def write_url(content):
 write_url("http://nix-proxy.lan\n")
 cfg, warnings = run_block()
 assert 'nix.settings.substituters = [ "http://nix-proxy.lan" ];' in cfg, cfg
-# flake-registry is flakes-gated: as a live setting it fails the target's
-# nix.conf validation inside nixos-install (stock targets have flakes
-# disabled). It must only ever appear commented — regression guard.
-flake_registry_lines = [line for line in cfg.splitlines() if "flake-registry" in line]
-assert flake_registry_lines, "advisory flake-registry comment missing"
-for line in flake_registry_lines:
-    assert line.lstrip().startswith("#"), "flake-registry must stay commented: " + line
 
 # Validate the persisted settings the way the target itself will: the
 # pkgs.formats.nixConf checkPhase runs `nix config show` with only the

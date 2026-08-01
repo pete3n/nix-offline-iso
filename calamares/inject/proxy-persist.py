@@ -6,11 +6,11 @@
     # first nixos-rebuild works on the filtered network. No file — a Direct
     # install — means nothing is appended.
     #
-    # flake-registry = "" is deliberately NOT set, only advised in a comment:
-    # it is a flakes-gated setting and the stock target leaves flakes
-    # disabled, so the nix.conf validation that runs inside nixos-install
-    # (pkgs.formats.nixConf checkPhase, warnings promoted to errors) fails
-    # the whole install if the setting is present.
+    # Only ungated settings may be emitted here: stock targets enable no
+    # experimental features, and nixos-install validates the generated
+    # nix.conf with warnings promoted to errors (a flakes-gated setting
+    # like flake-registry fails the whole install; the overlay test
+    # enforces this with the same validation pipeline).
     _proxy_url_file = "/run/nix-cache-url"
     _proxy_url = None
     try:
@@ -34,10 +34,6 @@
             "  # Written by the proxied installer; remove if this machine leaves\n"
             "  # the filtered network.\n"
             '  nix.settings.substituters = [ "' + _proxy_url + '" ];\n'
-            "  # If you enable flakes on this machine, also set\n"
-            '  #   nix.settings.flake-registry = "";\n'
-            "  # the global flake registry lives on channels.nixos.org, which the\n"
-            "  # cache proxy does not expose.\n"
             "\n"
         )
     # --- end proxied-iso persist ---

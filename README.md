@@ -35,18 +35,16 @@ Targets **NixOS 26.05**.
      # Written by the proxied installer; remove if this machine leaves
      # the filtered network.
      nix.settings.substituters = [ "http://nix-proxy.lan" ];
-     # If you enable flakes on this machine, also set
-     #   nix.settings.flake-registry = "";
-     # the global flake registry lives on channels.nixos.org, which the
-     # cache proxy does not expose.
    ```
 
    so the first `nixos-rebuild switch` works on the filtered network. To
    undo, delete the block and rebuild (sensible only once the machine has
-   another route to packages). The `flake-registry` advice stays a comment
-   on purpose: it is a flakes-gated setting, stock targets have flakes
-   disabled, and the target's own nix.conf validation (run during
-   `nixos-install`) rejects gated settings whose feature is off.
+   another route to packages). Nothing beyond `substituters` is persisted:
+   anything else (registry behavior, experimental features) is deliberately
+   left to the network and to configuration management — and note that the
+   persist block may only ever emit *ungated* settings, because the target's
+   nix.conf is validated during `nixos-install` with no experimental
+   features enabled (the overlay test enforces this).
 
 Quitting the Proxy screen leaves the live session without starting
 Calamares; relaunch from the dock/menu entry.
@@ -94,16 +92,20 @@ the install.
 
 ## Live environment adjustments
 
-The live session enables the `nix-command` and `flakes` features and disables
-the global flake-registry fetch (the automatic `flake:nixpkgs` registry pin to
-the ISO's baked nixpkgs is kept). This is load-bearing, not cosmetic:
-flake-built ISOs — like this one — get `NIX_PATH=nixpkgs=flake:nixpkgs` from
-nixpkgs' own `nixosSystem`, and without the flakes feature `nixos-install`
-cannot resolve `<nixpkgs/nixos>` and dies with "experimental Nix feature
-'flakes' is disabled". Hydra's channel-built stock ISO never has that
-search-path entry, which is why the stock installer gets away without it.
-The Target is unaffected: its generated config enables no experimental
-features.
+The live session enables the `nix-command` and `flakes` features (the
+automatic `flake:nixpkgs` registry pin to the ISO's baked nixpkgs is kept, so
+this involves no network). This is load-bearing, not cosmetic: flake-built
+ISOs — like this one — get `NIX_PATH=nixpkgs=flake:nixpkgs` from nixpkgs' own
+`nixosSystem`, and without the flakes feature `nixos-install` cannot resolve
+`<nixpkgs/nixos>` and dies with "experimental Nix feature 'flakes' is
+disabled". Hydra's channel-built stock ISO never has that search-path entry,
+which is why the stock installer gets away without it. The Target is
+unaffected: its generated config enables no experimental features.
+
+Registry behavior is otherwise stock: reaching the global flake registry
+(`channels.nixos.org`) is treated as a network/appliance concern, not
+something the ISO disables. Hard-disabling `flake-registry` is the *offline*
+branches' guard; a proxied network is expected to allow-list what it needs.
 
 ## Limitations
 

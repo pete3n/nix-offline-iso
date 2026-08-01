@@ -155,10 +155,6 @@
                   "nix-command"
                   "flakes"
                 ];
-                # With flakes on, keep the global registry off in the live
-                # environment: the nixpkgs pin is local, and
-                # channels.nixos.org is unreachable behind the Cache proxy.
-                nix.settings.flake-registry = "";
               }
             )
           ];

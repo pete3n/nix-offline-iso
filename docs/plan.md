@@ -42,8 +42,11 @@ Design anchors (settled in the 2026-08-01 grill session):
   `configuration.nix`. Direct install touches nothing. (`flake-registry = ""`
   was originally persisted too — the first host ISO test showed it fails the
   target's nix.conf validation during nixos-install, because it is
-  flakes-gated and stock targets have flakes disabled; it is now only an
-  advisory comment in the generated config.)
+  flakes-gated and stock targets have flakes disabled. After the first
+  working install it was dropped entirely, advisory comment included:
+  registry hard-disabling is the offline branches' guard, and
+  channels.nixos.org reachability is an appliance concern — allow-list what
+  the network needs rather than design around it being blocked.)
 
 ## Phase 0 — carve out the offline machinery (`flake.nix`)
 
