@@ -35,15 +35,18 @@ Targets **NixOS 26.05**.
      # Written by the proxied installer; remove if this machine leaves
      # the filtered network.
      nix.settings.substituters = [ "http://nix-proxy.lan" ];
-     # The global flake registry lives on channels.nixos.org, which the
-     # cache proxy does not expose; disable the fetch instead of letting
-     # flake commands hang on it.
-     nix.settings.flake-registry = "";
+     # If you enable flakes on this machine, also set
+     #   nix.settings.flake-registry = "";
+     # the global flake registry lives on channels.nixos.org, which the
+     # cache proxy does not expose.
    ```
 
    so the first `nixos-rebuild switch` works on the filtered network. To
    undo, delete the block and rebuild (sensible only once the machine has
-   another route to packages).
+   another route to packages). The `flake-registry` advice stays a comment
+   on purpose: it is a flakes-gated setting, stock targets have flakes
+   disabled, and the target's own nix.conf validation (run during
+   `nixos-install`) rejects gated settings whose feature is off.
 
 Quitting the Proxy screen leaves the live session without starting
 Calamares; relaunch from the dock/menu entry.

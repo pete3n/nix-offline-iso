@@ -3,9 +3,14 @@
     # `cfg += cfgtail` closes the generated attrset. When the operator chose
     # a Proxied install, the Proxy screen wrote the Cache URL to
     # /run/nix-cache-url; point the target's nix at the Cache proxy so the
-    # first nixos-rebuild works on the filtered network, and disable the
-    # global flake registry (channels.nixos.org is unreachable there). No
-    # file — a Direct install — means nothing is appended.
+    # first nixos-rebuild works on the filtered network. No file — a Direct
+    # install — means nothing is appended.
+    #
+    # flake-registry = "" is deliberately NOT set, only advised in a comment:
+    # it is a flakes-gated setting and the stock target leaves flakes
+    # disabled, so the nix.conf validation that runs inside nixos-install
+    # (pkgs.formats.nixConf checkPhase, warnings promoted to errors) fails
+    # the whole install if the setting is present.
     _proxy_url_file = "/run/nix-cache-url"
     _proxy_url = None
     try:
@@ -29,10 +34,10 @@
             "  # Written by the proxied installer; remove if this machine leaves\n"
             "  # the filtered network.\n"
             '  nix.settings.substituters = [ "' + _proxy_url + '" ];\n'
-            "  # The global flake registry lives on channels.nixos.org, which the\n"
-            "  # cache proxy does not expose; disable the fetch instead of letting\n"
-            "  # flake commands hang on it.\n"
-            '  nix.settings.flake-registry = "";\n'
+            "  # If you enable flakes on this machine, also set\n"
+            '  #   nix.settings.flake-registry = "";\n'
+            "  # the global flake registry lives on channels.nixos.org, which the\n"
+            "  # cache proxy does not expose.\n"
             "\n"
         )
     # --- end proxied-iso persist ---

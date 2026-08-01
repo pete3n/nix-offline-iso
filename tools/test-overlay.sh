@@ -135,7 +135,63 @@ def write_url(content):
 write_url("http://nix-proxy.lan\n")
 cfg, warnings = run_block()
 assert 'nix.settings.substituters = [ "http://nix-proxy.lan" ];' in cfg, cfg
-assert 'nix.settings.flake-registry = "";' in cfg, cfg
+# flake-registry is flakes-gated: as a live setting it fails the target's
+# nix.conf validation inside nixos-install (stock targets have flakes
+# disabled). It must only ever appear commented — regression guard.
+flake_registry_lines = [line for line in cfg.splitlines() if "flake-registry" in line]
+assert flake_registry_lines, "advisory flake-registry comment missing"
+for line in flake_registry_lines:
+    assert line.lstrip().startswith("#"), "flake-registry must stay commented: " + line
+
+# Validate the persisted settings the way the target itself will: the
+# pkgs.formats.nixConf checkPhase runs `nix config show` with only the
+# nix-command feature and promotes warnings to errors, inside
+# nixos-install. This is the check that caught flake-registry being
+# flakes-gated on a flakes-disabled target.
+import os
+import shutil
+import subprocess
+import tempfile
+
+if shutil.which("nix"):
+    conf_lines = []
+    for line in cfg.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("nix.settings."):
+            continue
+        key, _, value = stripped[len("nix.settings."):].partition(" = ")
+        value = value.rstrip(";").strip()
+        if value.startswith("["):
+            value = " ".join(
+                part.strip().strip('"') for part in value.strip("[]").split()
+            )
+        else:
+            value = value.strip('"')
+        conf_lines.append("{} = {}".format(key, value))
+    assert conf_lines, "expected at least one persisted nix.settings line"
+    conf_dir = tempfile.mkdtemp()
+    with open(os.path.join(conf_dir, "nix.conf"), "w") as conf_fh:
+        conf_fh.write("\n".join(conf_lines) + "\n")
+    check_env = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in ("NIX_CONFIG", "NIX_USER_CONF_FILES")
+    }
+    check_env["NIX_CONF_DIR"] = conf_dir
+    result = subprocess.run(
+        ["nix", "config", "show", "--no-net",
+         "--option", "experimental-features", "nix-command"],
+        capture_output=True, text=True, env=check_env,
+    )
+    problems = [
+        line
+        for line in (result.stderr + result.stdout).splitlines()
+        if line.startswith(("warning:", "error:"))
+    ]
+    assert result.returncode == 0 and not problems, problems or result.stderr
+    print("ok: persisted settings pass the target's nix.conf validation")
+else:
+    print("SKIP: nix not on PATH; target nix.conf validation not simulated")
 assert cfg.startswith("BASE\n") and not warnings
 print("ok: valid Cache URL appended to cfg")
 

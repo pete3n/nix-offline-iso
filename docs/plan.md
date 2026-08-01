@@ -19,8 +19,12 @@ Design anchors (settled in the 2026-08-01 grill session):
 - The Proxy screen is a pre-Calamares dialog; it owns the Reachability probe
   (`GET <url>/nix-cache-info`, expect 200 + body starting `StoreDir:`).
 - Proxied install reroutes the live environment AND persists
-  `nix.settings.substituters = [ <Cache URL> ]` + `flake-registry = ""` into
-  the Target's generated `configuration.nix`. Direct install touches nothing.
+  `nix.settings.substituters = [ <Cache URL> ]` into the Target's generated
+  `configuration.nix`. Direct install touches nothing. (`flake-registry = ""`
+  was originally persisted too — the first host ISO test showed it fails the
+  target's nix.conf validation during nixos-install, because it is
+  flakes-gated and stock targets have flakes disabled; it is now only an
+  advisory comment in the generated config.)
 
 ## Phase 0 — carve out the offline machinery (`flake.nix`)
 
