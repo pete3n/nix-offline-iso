@@ -44,7 +44,7 @@
 
             # 3. For a flake install, pass the PRE-BUILT system path via
             # --system (config-copy.py builds it in the live store first).
-            sed -i 's|^\([ \t]*\)"nixos-install",|\1"nixos-install",\n\1*(["--system", offline_system_path] if offline_system_path else []),|' "$main"
+            sed -i 's|^\([ \t]*\)"nixos-install",|\1"nixos-install",\n\1*(["--system", offline_system_path, "--no-channel-copy"] if offline_system_path else []),|' "$main"
             grep -q -- '"--system", offline_system_path\]' "$main" \
             	|| { echo "ERROR: nixos-install anchor missing in main.py"; exit 1; }
 
@@ -213,7 +213,15 @@
                     path = fetched.outPath;
                     narHash = fetched.narHash;
                   }
-                  // (if node.locked ? lastModified then { inherit (node.locked) lastModified; } else { });
+                  // (if node.locked ? lastModified then { inherit (node.locked) lastModified; } else { })
+                  # Carry rev/revCount through the repin (path refs accept
+                  # them). nixpkgs derives system.nixos.versionSuffix from
+                  # self.shortRev, falling back to "dirty" — dropping rev made
+                  # the installed target evaluate a *different* toplevel
+                  # (…-dirty) than the ISO baked (…-<rev>), so every rebuild,
+                  # no-ops included, re-built the whole version-suffix cone.
+                  // (if node.locked ? rev then { inherit (node.locked) rev; } else { })
+                  // (if node.locked ? revCount then { inherit (node.locked) revCount; } else { });
                 };
                 source = fetched.outPath;
               }

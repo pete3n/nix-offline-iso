@@ -138,4 +138,41 @@
                     _offline_build.stderr,
                 )
             offline_system_path = _offline_build.stdout.strip()
+            # Seed the target store with the flake's input source trees so the
+            # installed system can re-evaluate its own flake offline. The
+            # baked flake.lock pins every input to a /nix/store/*-source path
+            # that lives in the installer's store but is only consumed at
+            # *evaluation* time — it is not in the built system's runtime
+            # closure, so nixos-install will not copy it. Without these paths
+            # the first `nixos-rebuild switch` after reboot fails with
+            # `path '/nix/store/...-source' does not exist`. A bare path to
+            # `nix copy --to` is a chroot store rooted there, so this also
+            # registers the paths in the target's Nix DB.
+            _offline_lock = os.path.join(_offline_etc, "flake.lock")
+            _offline_src_paths = []
+            try:
+                with open(_offline_lock, "r") as _offline_lock_file:
+                    _offline_nodes = json.load(_offline_lock_file).get("nodes", {})
+                for _offline_node in _offline_nodes.values():
+                    _offline_locked = _offline_node.get("locked", {})
+                    if _offline_locked.get("type") == "path" and _offline_locked.get("path"):
+                        _offline_src_paths.append(_offline_locked["path"])
+            except (OSError, ValueError) as _offline_err:
+                return (
+                    "Failed to read the flake lock for offline input seeding",
+                    str(_offline_err),
+                )
+            if _offline_src_paths:
+                _offline_copy = subprocess.run(
+                    ["pkexec", "nix", "copy", "--offline", "--no-check-sigs",
+                     "--to", root_mount_point] + _offline_src_paths,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                )
+                if _offline_copy.returncode != 0:
+                    return (
+                        "Failed to seed flake input sources into the target store",
+                        _offline_copy.stderr,
+                    )
     # --- end offline-iso config copy ---
