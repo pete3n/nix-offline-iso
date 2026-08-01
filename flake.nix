@@ -12,10 +12,7 @@
     target-flake.url = "path:./configs/flake";
 
     # Determinate Nix for the live installer itself (the target gets it via
-    # configs/flake). Pinned to major version 3, same line the target pins, so
-    # both bake the same Determinate release. Its module replaces the installer's
-    # nix-daemon with determinate-nixd, so all install-time builds run through
-    # Determinate Nix.
+    # configs/flake). Pinned to major version 3.
     determinate.url = "https://flakehub.com/f/DeterminateSystems/determinate/3";
   };
 
@@ -36,10 +33,6 @@
 
       # Force the installer's nix to run offline (no cache.nixos.org probe, no
       # global flake-registry fetch), and enable flakes for the flake install.
-      # Under Determinate these nix.settings still apply: the determinate module
-      # redirects the NixOS-generated nix.conf to /etc/nix/nix.custom.conf, which
-      # determinate-nixd includes, so the empty substituters/registry bind the
-      # Determinate daemon too.
       offlineNixModule =
         { lib, ... }:
         {
@@ -57,10 +50,6 @@
           # Determinate's module pins a system registry entry for `nixpkgs`
           # pointing at a FlakeHub tarball (modules/nixos.nix), which is a
           # network resolution path that flake-registry = "" does not cover.
-          # For the offline installer, force the whole system registry empty so
-          # no bare flakeref resolution can reach out. (This is installer-only
-          # the installed target keeps Determinate's registry pin, which is the
-          # normal, desirable behaviour once it has network.)
           nix.registry = lib.mkForce { };
         };
 
@@ -218,24 +207,11 @@
                 target "nixos" or expose a single configuration.
               '';
 
-          # The installed target must evaluate the SAME toplevel it boots, or a
-          # no-change `nixos-rebuild` stops being a no-op and tries to realize a
-          # *different* system offline. So the offline-rebuild dependency set is
-          # declared in the committed target config itself (system.extraDependencies
-          # in configs/flake/configuration.nix), NOT injected here at build time.
-          # We bake exactly that config's toplevel — the one the installer installs
-          # and the target later re-evaluates — keeping installed == evaluated ==
-          # baked. (An earlier version injected the deps only here via
-          # extendModules; the installed system then diverged from what the target
-          # evaluated, so every rebuild rebuilt from scratch and reached the network
-          # — e.g. fetching the Python source tarball.)
           targetToplevel = targetConfig.config.system.build.toplevel;
 
           # If the target declares a disko layout, bake its partition/format/mount
           # script (and its runtime closure) into the ISO store so offline-install
-          # can partition the disk fully offline. `system.build.diskoScript` only
-          # exists when the disko module is imported, so guard on its presence and
-          # contribute nothing for a plain (non-disko) target.
+          # can partition the disk fully offline. 
           diskoStoreContents =
             if targetConfig.config.system.build ? diskoScript then
               [ targetConfig.config.system.build.diskoScript ]
@@ -275,11 +251,7 @@
                   }
                   // (if node.locked ? lastModified then { inherit (node.locked) lastModified; } else { })
                   # Carry rev/revCount through the repin (path refs accept
-                  # them). nixpkgs derives system.nixos.versionSuffix from
-                  # self.shortRev, falling back to "dirty" — dropping rev made
-                  # the installed target evaluate a *different* toplevel
-                  # (…-dirty) than the ISO baked (…-<rev>), so every rebuild,
-                  # no-ops included, re-built the whole version-suffix cone.
+                  # them).
                   // (if node.locked ? rev then { inherit (node.locked) rev; } else { })
                   // (if node.locked ? revCount then { inherit (node.locked) revCount; } else { });
                 };

@@ -5,12 +5,7 @@
     # Indirect nixpkgs reference resolved via flake registry
     nixpkgs.url = "nixpkgs";
 
-    # Determinate Nix - the Nix distribution the target system runs. 
-		# Pinned to major version 3 so a later `nix flake update` stays on a compatible
-    # line; the committed flake.lock records the exact rev the ISO bakes. Kept as
-    # an independent input (not `follows`-ing our nixpkgs) to match how
-    # Determinate Systems ship it. Determinate builds its own nix against its own
-    # pinned inputs. Its input closure is baked into the ISO for offline install.
+    # Determinate Nix pinned to major version 3.
     determinate.url = "https://flakehub.com/f/DeterminateSystems/determinate/3";
   };
 

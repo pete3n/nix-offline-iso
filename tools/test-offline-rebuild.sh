@@ -1,18 +1,5 @@
 #!/usr/bin/env bash
-# test-offline-rebuild.sh — regression test for the offline-rebuild contract:
-# "a config-only change rebuilds on the installed target with no network".
-#
-# How it works: build the committed toplevel (exactly what the ISO bakes), seed
-# it into a throwaway chroot store (exactly what nixos-install copies onto the
-# target), then rebuild perturbed copies of the config against that store with
-# --offline. A FAIL here is the same failure the real target would hit after
-# reboot — caught in seconds, without an ISO build + VM install cycle.
-#
-# Run on the build machine. The initial (online) toplevel build warms the flake
-# fetcher cache, so the offline cases can copy input sources into the probe
-# store without touching the network.
-#
-# Usage: tools/test-offline-rebuild.sh [path-to-flake-dir]
+# test-offline-rebuild.sh regression test.
 set -euo pipefail
 
 script_dir=$(cd "$(dirname "$0")" && pwd)
@@ -44,8 +31,8 @@ echo "   simulated target store size: $(du -sh "$store_root/nix/store" | cut -f1
 
 overall=0
 
-# Each case is a sed program applied to a fresh copy of the committed config —
-# a stand-in for "the user edits configuration.nix on the installed system".
+# Each case is a sed program applied to a fresh copy of the committed config.
+# A stand-in for "the user edits configuration.nix on the installed system".
 run_case() {
   local case_name=$1 sed_prog=$2
   rm -rf "$cfg_dir"
@@ -55,7 +42,7 @@ run_case() {
   echo ">> [$case_name] offline rebuild against the simulated target store"
   local log="$work/$case_name.log"
   # --builders '': the target has no remote builders, so the probe must not
-  # use the dev machine's either — a reachable builder would realize the
+  # use the dev machine's either. A reachable builder would realize the
   # missing paths remotely and mask a real on-target failure. (The first probe
   # run showed exactly this attempt: ssh-ng://remotebuild@….)
   if nix build --store "local?root=$store_root" --offline --no-link \
@@ -76,14 +63,10 @@ run_case password 's/initialPassword = "test"/initialPassword = "offline-probe"/
 run_case timezone 's|time.timeZone = "America/New_York"|time.timeZone = "America/Chicago"|'
 run_case bootloader 's|boot.loader.systemd-boot.enable = true;|boot.loader.systemd-boot.enable = true;\n  boot.loader.systemd-boot.configurationLimit = 7;|'
 # Toggling a service whose package is already in the closure (fstrim ships in
-# util-linux) — the "enable a baked service" leg of the offline contract.
+# util-linux).
 run_case service 's|networking.networkmanager.enable = true;|networking.networkmanager.enable = true;\n  services.fstrim.enable = true;|'
-# Disabling a service whose package rides in systemPackages (sshd) — the only
-# case that changes system-path *membership*, so system-path itself rebuilds
-# (its post-build hook needs plain texinfo, shared-mime-info and
-# desktop-file-utils), and the dbus config that embeds the system-path store
-# path rebuilds with it (xsltproc). The sed targets the four-space-indented
-# `enable = true;` inside the services.openssh block.
+# Disabling a service whose package rides in systemPackages (sshd). This is the only
+# case that changes system-path membership, so system-path itself rebuilds.
 run_case sshd-disable 's|^    enable = true;|    enable = false;|'
 
 if [ "$overall" -eq 0 ]; then

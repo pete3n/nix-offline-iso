@@ -5,22 +5,9 @@ include a user-provided flake configuration that can be installed with **no
 network connection**, by including all of its dependencies in the ISO's Nix
 store.
 
-This branch (`nixos-26.05-cli-determinate`) ships **Determinate Nix** —
-[Determinate Systems'](https://determinate.systems) Nix distribution — as the
-Nix that runs on **both the live installer and the installed system**, while
-keeping the install fully offline. Only Determinate's offline-compatible core is
-used: FlakeHub Cache, `determinate-nixd login`, and telemetry are switched off
-for the install (see [Determinate Nix](#determinate-nix)).
-
-It is the CLI variant: there is no graphical installer; you install from a
-console with the `offline-install` script. (The graphical Calamares variant
-lives on the `nixos-26.05-graphical` branch; a plain-upstream-Nix CLI variant
-that also supports channels lives on `nixos-26.05-cli`.)
-
-Targets **NixOS 26.05**. Only the **flake** install type is supported on this
-branch: a `flake.nix` installed offline (see
-[Flake offline support](#flake-offline-support)). For the channels install type
-(a plain `configuration.nix`, no flake), use the `nixos-26.05-cli` branch.
+This branch ships **Determinate Nix**: [Determinate Systems'](https://determinate.systems) 
+Nix distribution. It runs runs on **both the live installer and the installed system**, 
+while keeping the install fully offline. 
 
 ## Usage
 
@@ -45,32 +32,13 @@ nix build .#iso.flake-x86_64-linux
 ```
 
 5. Write the ISO to disk with `dd` or an equivalent tool.
-6. Boot the target. At the console:
-   - **disko flake target?** Just run `sudo offline-install --host NAME`. disko
-     partitions, formats and mounts the disk(s) declared in your config (at
-     `/mnt`) — don't partition by hand or pass `--disk`. Pass `--no-disko` to opt
-     out and partition yourself.
-   - Otherwise: partition and mount your target at `/mnt` yourself, **or** let the
-     installer do a single disk: `offline-install --disk /dev/sdX` (GPT: 1024 MiB
-     ESP + ext4 root — **erases the disk**).
-   - Run `sudo offline-install`.
-   - For a **flake** target, pass `--host NAME` if your
-     `nixosConfigurations.<name>` isn't the default `nixos`.
-
-   For an **encrypted** or otherwise custom layout, partition by hand before
-   running `offline-install` — run `partition-help` at the console for a
-   worked LUKS2 + LVM (encrypted root + swap) example. See
-   [Manual partitioning](#manual-partitioning-encrypted-root--swap).
-
-   The install may appear to sit for a long time while it builds and copies from
-   the store — that is expected.
+6. Boot the target, and follow the instructions from the console.
 
 ## How it works
 
 The installer is the stock NixOS **minimal** (console) image
-(`installation-cd-minimal`). There is no Calamares; the ISO simply ships the
-`offline-install` script (`cli/offline-install.sh`) and a login hint. When you
-run it, the script:
+(`installation-cd-minimal`). The ISO simply ships an `offline-install` script 
+(`cli/offline-install.sh`) and a login hint. When you run it, the script:
 
 1. Runs `nixos-generate-config --root /mnt` and preserves the freshly generated
    `hardware-configuration.nix`.
@@ -88,54 +56,36 @@ run it, the script:
 The installer is also configured to run nix **fully offline** during install
 (`nix.settings.substituters = [ ]` and `flake-registry = ""`). Without this, nix
 reaches out to `cache.nixos.org` (binary-cache probe) and `channels.nixos.org`
-(global flake registry) and fails with no network. Under Determinate these
-settings still apply: the Determinate module redirects the generated `nix.conf`
-to `/etc/nix/nix.custom.conf`, which `determinate-nixd` includes. Determinate
-additionally pins a *system* flake-registry entry for `nixpkgs` to a FlakeHub
-tarball, which `flake-registry = ""` does not cover, so the installer also forces
-`nix.registry = {}` (empty) — see [Determinate Nix](#determinate-nix). Because
-`nixos-generate-config` regenerates `hardware-configuration.nix` for the target
-machine at install time, the installed system differs slightly from what was
-pre-built, so a small rebuild must be performed. The ISO bakes the target's
-**build/derivation closure** so that the rebuild runs offline from sources
-already in the store.
+(global flake registry) and fails with no network. The Determinate module 
+redirects the generated `nix.conf` to `/etc/nix/nix.custom.conf`, which
+`determinate-nixd` includes. Determinate additionally pins a *system* flake-registry 
+entry for `nixpkgs` to a FlakeHub tarball, which `flake-registry = ""` does not 
+cover, so the installer also forces `nix.registry = {}` (empty) (see 
+[Determinate Nix](#determinate-nix)). Because `nixos-generate-config` regenerates 
+`hardware-configuration.nix` for the target machine at install time, the 
+installed system differs slightly from what was pre-built, so a small rebuild 
+must be performed. The ISO bakes the target's **build/derivation closure** so that 
+the rebuild runs offline from sources already in the store.
 
 ## Determinate Nix
 
 This branch replaces upstream Nix with **Determinate Nix** in two places:
 
-- **The live installer** — `flake.nix` imports `determinate.nixosModules.default`
+- **The live installer** imports `determinate.nixosModules.default`
   into the installer image. Its `determinate-nixd` daemon does the install-time
   build.
-- **The installed system** — `configs/flake/flake.nix` imports the same module,
-  so the machine you install runs Determinate Nix (flakes on by default,
-  `nix-command` enabled, `fh` available).
+- **The installed system example** `configs/flake/flake.nix` imports the same module,
+  so the machine you install runs Determinate Nix.
 
 Both pin Determinate to FlakeHub major version `3` (`.../determinate/3`); the
 committed locks record the exact release baked into the ISO.
-
-**Hard-neutered for offline.** Determinate is an online-first distribution
-(FlakeHub Cache, `determinate-nixd login`, telemetry). For the offline *install*
-none of that is used:
 
 - No cache substituter is configured (`determinate.edgeCacheSubstituters` is left
   at its `null` default; the module adds no substituter on its own).
 - The installer forces `nix.settings.substituters = [ ]` and, because
   Determinate's module pins a FlakeHub `nixpkgs` registry entry,
-  `nix.registry = {}` as well — so no bare flakeref resolution reaches the
+  `nix.registry = {}` as well, so no bare flakeref resolution reaches the
   network.
-
-What you keep is Determinate *Nix itself* — the improved daemon/binary — on both
-installer and target. FlakeHub Cache and `determinate-nixd login` remain
-available on the **installed** machine once it has network (the target keeps
-Determinate's registry pin; only the installer neuters it). `fh` is shipped in
-the installer for that later, online use — it does nothing during the offline
-install.
-
-> **Note:** whether `determinate-nixd` makes any background network attempt when
-> offline (and simply fails harmlessly) has not been fully verified on this
-> branch yet; the module exposes no explicit telemetry toggle in the pinned
-> version. See [`docs/adr/0001`](docs/adr/0001-determinate-nix-offline.md).
 
 ## Layout
 
