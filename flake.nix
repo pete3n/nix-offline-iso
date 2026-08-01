@@ -45,11 +45,12 @@
             # 3. For a flake install, pass the PRE-BUILT system path via
             # --system (config-copy.py builds it in the live store first).
             sed -i 's|^\([ \t]*\)"nixos-install",|\1"nixos-install",\n\1*(["--system", offline_system_path, "--no-channel-copy"] if offline_system_path else []),|' "$main"
-            grep -q -- '"--system", offline_system_path\]' "$main" \
+            grep -q -- '"--system", offline_system_path' "$main" \
             	|| { echo "ERROR: nixos-install anchor missing in main.py"; exit 1; }
 
             # 4. Strip the Calamares pages/jobs whose choices the
-            # user-provided configuration overrides. 
+            # user-provided configuration overrides.
+            settings=$out/etc/calamares/settings.conf
             for anchor in users packagechooser 'notesqml@unfree'; do
             	grep -qE "^[[:space:]]*-[[:space:]]*$anchor[[:space:]]*\$" "$settings" \
             		|| { echo "ERROR: expected a '$anchor' entry in settings.conf sequence"; exit 1; }
