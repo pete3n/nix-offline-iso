@@ -18,25 +18,8 @@
     },
     "root": {
       "inputs": {
-        "nixpkgs": "nixpkgs",
-        "target-flake": "target-flake"
+        "nixpkgs": "nixpkgs"
       }
-    },
-    "target-flake": {
-      "inputs": {
-        "nixpkgs": [
-          "nixpkgs"
-        ]
-      },
-      "locked": {
-        "path": "./configs/flake",
-        "type": "path"
-      },
-      "original": {
-        "path": "./configs/flake",
-        "type": "path"
-      },
-      "parent": []
     }
   },
   "root": "root",
