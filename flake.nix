@@ -14,15 +14,10 @@
       ];
       forAllSystems = nixpkgs.lib.genAttrs systems;
 
-      # Prefilled into the Proxy screen's Cache URL field; operators can
-      # replace it per install. Consumed by the proxy-screen package
-      # (phase 2 of docs/plan.md). See CONTEXT.md for the term.
+      # Prefilled into the Proxy screen's Cache URL field.
       cacheUrlDefault = "http://nix-proxy.lan";
 
       calamaresOverlay = final: prev: {
-        # The Proxy screen (see CONTEXT.md and docs/adr/0002): a GTK dialog
-        # shown before Calamares that collects/probes the Cache URL and, for
-        # a Proxied install, reroutes the live environment's substituters.
         proxy-screen =
           let
             pythonEnv = final.python3.withPackages (pythonPackages: [
@@ -33,9 +28,6 @@
             pname = "proxy-screen";
             version = "0.1.0";
             dontUnpack = true;
-            # gobject-introspection's setup hook + wrapGAppsHook3 gather the
-            # GI typelibs (Gtk from gtk3, GLib/GObject via pygobject3) into
-            # the wrapper's environment.
             nativeBuildInputs = [
               final.wrapGAppsHook3
               final.gobject-introspection
@@ -57,10 +49,7 @@
         # Route every launch of the installer through the Proxy screen:
         # capture the stock desktop entry's Exec at build time, generate a
         # launcher that shows the screen and then execs that stock command,
-        # and point the desktop entry at the launcher. The ISO's autostart
-        # item (makeAutostartItem in installation-cd-graphical-calamares.nix)
-        # copies this desktop file verbatim, so autostart and menu launches
-        # both pass through the screen.
+        # and point the desktop entry at the launcher.
         calamares-nixos = prev.calamares-nixos.overrideAttrs (old: {
           postInstall = (old.postInstall or "") + ''
             desktop=$out/share/applications/calamares.desktop
@@ -120,10 +109,6 @@
       };
 
       # The stock graphical Calamares (GNOME) installer, plus the overlay.
-      # Unlike the offline branches, nothing is baked in and the live
-      # environment keeps stock nix settings: the Proxy screen reroutes
-      # substitution at runtime only when the operator chooses a Proxied
-      # install.
       mkProxyInstaller =
         system:
         nixpkgs.lib.nixosSystem {
@@ -139,18 +124,6 @@
                 # wrapped desktop entry is the normal path.
                 environment.systemPackages = [ pkgs.proxy-screen ];
 
-                # The ISO is built from a flake, so nixpkgs' nixosSystem sets
-                # NIX_PATH=nixpkgs=flake:nixpkgs in the live session (see
-                # nixpkgs-flake.nix, setNixPath). Resolving a flake: search
-                # path entry requires the flakes feature, which installer
-                # images leave disabled — nixos-install's
-                # nix-build '<nixpkgs/nixos>' dies with "experimental Nix
-                # feature 'flakes' is disabled". (Hydra's stock ISO is
-                # channel-built and never has that entry.) Enable the
-                # features in the LIVE environment only: flake:nixpkgs then
-                # resolves via the registry pin to the nixpkgs tree already
-                # baked into the ISO, no network involved. The Target is
-                # unaffected — its generated config enables nothing.
                 nix.settings.experimental-features = [
                   "nix-command"
                   "flakes"

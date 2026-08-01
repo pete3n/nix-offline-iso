@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Tests for calamares/proxy-screen.py — everything that runs without a
-# display: URL validation, the nix.conf rewrite (including the
+# Tests for calamares/proxy-screen.py
+# URL validation, the nix.conf rewrite (including the
 # symlink-into-the-store case the live ISO has), the --apply ordering
 # contract, and the Reachability probe against a local HTTP fixture.
 # The GTK path is exercised in the phase-4 VM matrix instead.

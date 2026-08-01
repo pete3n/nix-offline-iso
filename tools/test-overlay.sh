@@ -7,8 +7,8 @@
 # Usage:
 #   tools/test-overlay.sh /path/to/calamares-nixos-extensions/src
 #
-# The argument is the extensions *source* directory (the one containing
-# modules/, config/, branding/) — e.g. pkgs/by-name/ca/calamares-nixos-extensions/src
+# The argument is the extensions source directory (the one containing
+# modules/, config/, branding/) e.g. pkgs/by-name/ca/calamares-nixos-extensions/src
 # in the pinned nixpkgs, or a checkout of the upstream repo.
 set -euo pipefail
 
@@ -20,10 +20,7 @@ trap 'rm -rf "$work"' EXIT
 # Stand-in for the ${final.glibcLocales} store path.
 fake_locales=/nix/store/00000000000000000000000000000000-fake-glibc-locales
 
-# --- extract the extensions postInstall body and resolve its Nix interpolations ---
-# flake.nix holds several overrideAttrs postInstall blocks (calamares-nixos
-# and calamares-nixos-extensions); cut everything before the extensions attr
-# first so the range match lands on the right one.
+# Cut everything before the extensions attr first so the range match lands on the right one.
 sed -n '/calamares-nixos-extensions = prev.calamares-nixos-extensions.overrideAttrs/,$p' \
     "$flake_dir/flake.nix" \
   | sed -n "/postInstall = (old.postInstall or/,/^          '';/{p; /^          '';/q}" \
@@ -35,20 +32,19 @@ sed -n '/calamares-nixos-extensions = prev.calamares-nixos-extensions.overrideAt
   > "$work/postinstall.sh"
 
 # Any leftover interpolation means flake.nix gained one this script does not
-# know how to resolve — update the sed above.
+# know how to resolve: update the sed above.
 if grep -n '\${' "$work/postinstall.sh"; then
   echo "FAIL: unresolved Nix interpolation in extracted postInstall"; exit 1
 fi
 
-# --- fake $out mirroring the extensions installPhase (incl. its substitutions) ---
 out=$work/out
 mkdir -p "$out/etc/calamares" "$out/lib/calamares" "$out/share/calamares"
 cp -r "$snap/modules" "$out/lib/calamares/"
 cp -r "$snap/config/." "$out/etc/calamares/"
 cp -r "$snap/branding" "$out/share/calamares/"
 chmod -R u+w "$out"
-# The stock installPhase substitutes these BEFORE postInstall runs; replicate
-# so the overlay's own re-substitution of locale.conf is tested honestly.
+# The stock installPhase substitutes these before postInstall runs.
+# Replicate so the overlay's own re-substitution of locale.conf is tested correctly.
 sed -i "s|@out@|$out|g" "$out/etc/calamares/settings.conf"
 sed -i "s|@glibcLocales@|$fake_locales|g" "$out/etc/calamares/modules/locale.conf"
 
@@ -61,11 +57,9 @@ substituteInPlace() {
     "$file" "$from" "$to"
 }
 
-# --- run the overlay steps ---
 . "$work/postinstall.sh"
 echo "ok: postInstall ran to completion"
 
-# --- static assertions ---
 w=$out/etc/calamares/modules/welcome.conf
 grep -q 'Proxied-installer welcome.conf' "$w"
 if grep -qE '^[[:space:]]*-[[:space:]]*internet[[:space:]]*$|^[[:space:]]*internetCheckUrl' "$w"; then
@@ -86,7 +80,7 @@ echo "ok: locale.conf geoip-free, glibcLocales re-substituted"
 s=$out/etc/calamares/settings.conf
 for keep in welcome locale keyboard users packagechooser 'notesqml@unfree' \
             partition summary mount nixos umount finished; do
-  grep -qE "^[[:space:]]*-[[:space:]]*$keep[[:space:]]*\$" "$s" \
+  grep -qE "^[[:space:]]*-[[:space:]]*${keep[[:space:]]}*\$" "$s" \
     || { echo "FAIL: stock sequence entry '$keep' missing from settings.conf"; exit 1; }
 done
 echo "ok: full stock page/job sequence intact"
@@ -101,7 +95,6 @@ tail_line=$(grep -nE '^[[:space:]]*cfg \+= cfgtail[[:space:]]*$' "$m" | head -1 
   || { echo "FAIL: proxy-persist block landed after cfg += cfgtail"; exit 1; }
 echo "ok: main.py compiles; persist block inserted once, before cfg += cfgtail"
 
-# --- functional test of the injected block, extracted from the REAL main.py ---
 sed -n '/# --- proxied-iso: persist the Cache URL into the target ---/,/# --- end proxied-iso persist ---/p' \
   "$m" > "$work/block.py"
 python3 - "$work/block.py" "$work" <<'PYEOF'

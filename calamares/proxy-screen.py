@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""The Proxy screen: the first thing an operator sees when launching the
-NixOS proxied installer. docs/adr/0002 records why this is a dialog shown
-in front of Calamares rather than a page inside it.
-
-Two ways to run:
-
+"""The Proxy screen:
   proxy-screen              GTK window. Exits 0 when the operator presses
                             Continue (the launcher then execs Calamares),
                             1 when they close or quit instead.
@@ -67,10 +62,7 @@ def rewrite_nix_conf(cache_url, conf_path=NIX_CONF_PATH):
 
     /etc/nix/nix.conf on the live ISO is a symlink into the read-only store,
     so replace it with a regular file: the same content minus any existing
-    substituters line, plus ours. Settings not in the file — notably the
-    compiled-in trusted-public-keys with cache.nixos.org-1 — are unaffected,
-    which is why no key handling is needed: the Cache proxy serves
-    cache.nixos.org's own signed narinfos.
+    substituters line.
     """
     with open(conf_path, "r") as conf_file:
         original_lines = conf_file.read().splitlines()
@@ -101,7 +93,7 @@ def apply_proxied(
     """Root half of a Proxied install: reroute live nix, then record the URL.
 
     Ordering matters: the URL file is written last, so a failed daemon
-    restart leaves no record and the nixos job persists nothing — the
+    restart leaves no record and the nixos job persists nothing, and the
     system never ends up half-configured.
     """
     if not CACHE_URL_RE.match(cache_url):
