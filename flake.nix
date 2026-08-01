@@ -20,6 +20,65 @@
       cacheUrlDefault = "http://nix-cache.nxs.lan";
 
       calamaresOverlay = final: prev: {
+        # The Proxy screen (see CONTEXT.md and docs/adr/0002): a GTK dialog
+        # shown before Calamares that collects/probes the Cache URL and, for
+        # a Proxied install, reroutes the live environment's substituters.
+        proxy-screen =
+          let
+            pythonEnv = final.python3.withPackages (pythonPackages: [
+              pythonPackages.pygobject3
+            ]);
+          in
+          final.stdenv.mkDerivation {
+            pname = "proxy-screen";
+            version = "0.1.0";
+            dontUnpack = true;
+            # gobject-introspection's setup hook + wrapGAppsHook3 gather the
+            # GI typelibs (Gtk from gtk3, GLib/GObject via pygobject3) into
+            # the wrapper's environment.
+            nativeBuildInputs = [
+              final.wrapGAppsHook3
+              final.gobject-introspection
+            ];
+            buildInputs = [
+              final.gtk3
+              pythonEnv
+            ];
+            installPhase = ''
+              runHook preInstall
+              install -Dm755 ${./calamares/proxy-screen.py} $out/bin/proxy-screen
+              sed -i "1s|.*|#!${pythonEnv}/bin/python3|" $out/bin/proxy-screen
+              substituteInPlace $out/bin/proxy-screen \
+              	--replace-fail '@cacheUrlDefault@' '${cacheUrlDefault}'
+              runHook postInstall
+            '';
+          };
+
+        # Route every launch of the installer through the Proxy screen:
+        # capture the stock desktop entry's Exec at build time, generate a
+        # launcher that shows the screen and then execs that stock command,
+        # and point the desktop entry at the launcher. The ISO's autostart
+        # item (makeAutostartItem in installation-cd-graphical-calamares.nix)
+        # copies this desktop file verbatim, so autostart and menu launches
+        # both pass through the screen.
+        calamares-nixos = prev.calamares-nixos.overrideAttrs (old: {
+          postInstall = (old.postInstall or "") + ''
+            desktop=$out/share/applications/calamares.desktop
+            [ -f "$desktop" ] \
+            	|| { echo "ERROR: calamares.desktop not found in calamares-nixos"; exit 1; }
+            origExec=$(sed -n 's/^Exec=//p' "$desktop" | head -n1)
+            [ -n "$origExec" ] \
+            	|| { echo "ERROR: no Exec= line in calamares.desktop"; exit 1; }
+            substitute ${./calamares/proxy-screen-launch.in} $out/bin/proxy-screen-launch \
+            	--subst-var-by proxyScreen ${final.proxy-screen}/bin/proxy-screen \
+            	--subst-var-by origExec "$origExec"
+            chmod +x $out/bin/proxy-screen-launch
+            sed -i "s|^Exec=.*|Exec=$out/bin/proxy-screen-launch|" "$desktop"
+            grep -q "^Exec=$out/bin/proxy-screen-launch$" "$desktop" \
+            	|| { echo "ERROR: failed to rewrite calamares.desktop Exec"; exit 1; }
+          '';
+        });
+
         calamares-nixos-extensions = prev.calamares-nixos-extensions.overrideAttrs (old: {
           postInstall = (old.postInstall or "") + ''
             # 1. Drop the stock startup internet requirement. It probes
@@ -73,6 +132,14 @@
             { nixpkgs.overlays = [ calamaresOverlay ]; }
             zfsWarningFix
             "${nixpkgs}/nixos/modules/installer/cd-dvd/installation-cd-graphical-calamares-gnome.nix"
+            (
+              { pkgs, ... }:
+              {
+                # Terminal access to the Proxy screen for debugging; the
+                # wrapped desktop entry is the normal path.
+                environment.systemPackages = [ pkgs.proxy-screen ];
+              }
+            )
           ];
         };
 

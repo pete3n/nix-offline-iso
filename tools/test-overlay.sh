@@ -20,8 +20,13 @@ trap 'rm -rf "$work"' EXIT
 # Stand-in for the ${final.glibcLocales} store path.
 fake_locales=/nix/store/00000000000000000000000000000000-fake-glibc-locales
 
-# --- extract the postInstall body and resolve its Nix interpolations ---
-sed -n "/postInstall = (old.postInstall or/,/^          '';/p" "$flake_dir/flake.nix" \
+# --- extract the extensions postInstall body and resolve its Nix interpolations ---
+# flake.nix holds several overrideAttrs postInstall blocks (calamares-nixos
+# and calamares-nixos-extensions); cut everything before the extensions attr
+# first so the range match lands on the right one.
+sed -n '/calamares-nixos-extensions = prev.calamares-nixos-extensions.overrideAttrs/,$p' \
+    "$flake_dir/flake.nix" \
+  | sed -n "/postInstall = (old.postInstall or/,/^          '';/{p; /^          '';/q}" \
   | sed '1d;$d' \
   | sed "s|\${./calamares/welcome.conf}|$flake_dir/calamares/welcome.conf|g
          s|\${./calamares/locale.conf}|$flake_dir/calamares/locale.conf|g
@@ -155,4 +160,55 @@ assert cfg == "BASE\n" and not warnings
 print("ok: absent Cache URL file leaves cfg untouched")
 PYEOF
 
-echo "PASS: overlay simulation + proxy-persist functional tests"
+# --- simulate the calamares-nixos desktop-entry patch against a fixture ---
+# The real calamares.desktop only exists in the built package; this tests OUR
+# capture/generate/rewrite logic against the Exec shape upstream ships
+# (sh -c + pkexec). The build-time guards catch any upstream drift.
+fake_proxy_screen=/nix/store/00000000000000000000000000000000-proxy-screen/bin/proxy-screen
+
+sed -n '/calamares-nixos = prev.calamares-nixos.overrideAttrs/,$p' "$flake_dir/flake.nix" \
+  | sed -n "/postInstall = (old.postInstall or/,/^          '';/{p; /^          '';/q}" \
+  | sed '1d;$d' \
+  | sed "s|\${./calamares/proxy-screen-launch.in}|$flake_dir/calamares/proxy-screen-launch.in|g
+         s|\${final.proxy-screen}/bin/proxy-screen|$fake_proxy_screen|g" \
+  > "$work/desktop-patch.sh"
+if grep -n '\${' "$work/desktop-patch.sh"; then
+  echo "FAIL: unresolved Nix interpolation in extracted desktop patch"; exit 1
+fi
+
+# stdenv's substitute, reduced to the --subst-var-by form we use.
+substitute() {
+  local src=$1 dst=$2; shift 2
+  cp "$src" "$dst"
+  while [ $# -gt 0 ]; do
+    [ "$1" = --subst-var-by ] || { echo "substitute stub: unsupported $1"; return 1; }
+    python3 -c 'import sys; p, f, t = sys.argv[1:4]; s = open(p).read(); open(p, "w").write(s.replace(f, t))' \
+      "$dst" "@$2@" "$3"
+    shift 3
+  done
+}
+
+out=$work/calamares-out
+mkdir -p "$out/share/applications" "$out/bin"
+cat > "$out/share/applications/calamares.desktop" <<'DESKTOP'
+[Desktop Entry]
+Type=Application
+Name=Install System
+Exec=sh -c "pkexec calamares"
+Icon=calamares
+DESKTOP
+
+. "$work/desktop-patch.sh"
+
+launcher=$out/bin/proxy-screen-launch
+[ -x "$launcher" ] || { echo "FAIL: launcher not generated/executable"; exit 1; }
+grep -qF "$fake_proxy_screen || exit \$?" "$launcher" \
+  || { echo "FAIL: launcher does not gate on the Proxy screen"; exit 1; }
+grep -qF 'exec sh -c "pkexec calamares"' "$launcher" \
+  || { echo "FAIL: launcher lost the stock Exec command"; exit 1; }
+grep -q "^Exec=$out/bin/proxy-screen-launch$" "$out/share/applications/calamares.desktop" \
+  || { echo "FAIL: desktop Exec not rewritten to the launcher"; exit 1; }
+sh -n "$launcher"
+echo "ok: desktop entry rewired; generated launcher gates and preserves stock Exec"
+
+echo "PASS: overlay simulation + proxy-persist + desktop-entry tests"
