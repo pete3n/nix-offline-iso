@@ -18,7 +18,7 @@ does not host content of its own).
 
 **Cache URL**:
 The base URL at which the Installer reaches the Cache proxy
-(e.g. `http://nix-cache.nxs.lan`). It is a Nix substituter base URL — never an
+(e.g. `http://nix-proxy.lan`). It is a Nix substituter base URL — never an
 `http_proxy`/`https_proxy` value; nothing in this project sets proxy
 environment variables.
 _Avoid_: proxy URL (invites the `http_proxy` misreading).

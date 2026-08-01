@@ -33,7 +33,7 @@ header comment: the requirement moved to the Proxy screen, the installer is
 not offline); `zfsWarningFix`; the
 `installation-cd-graphical-calamares-gnome.nix` base.
 
-Add: `cacheUrlDefault = "http://nix-cache.nxs.lan";` as a named flake constant
+Add: `cacheUrlDefault = "http://nix-proxy.lan";` as a named flake constant
 threaded into the dialog package. Outputs become
 `nixosConfigurations.proxy-<system>` and `iso.proxy-<system>` (both arches).
 

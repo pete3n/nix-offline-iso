@@ -132,9 +132,9 @@ def write_url(content):
 
 
 # Case 1: Proxied install — plain host URL.
-write_url("http://nix-cache.nxs.lan\n")
+write_url("http://nix-proxy.lan\n")
 cfg, warnings = run_block()
-assert 'nix.settings.substituters = [ "http://nix-cache.nxs.lan" ];' in cfg, cfg
+assert 'nix.settings.substituters = [ "http://nix-proxy.lan" ];' in cfg, cfg
 assert 'nix.settings.flake-registry = "";' in cfg, cfg
 assert cfg.startswith("BASE\n") and not warnings
 print("ok: valid Cache URL appended to cfg")

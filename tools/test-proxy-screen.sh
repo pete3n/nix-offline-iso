@@ -25,16 +25,16 @@ spec.loader.exec_module(proxy_screen)
 # --- CACHE_URL_RE: what the screen lets through must be exactly what the
 # --- proxy-persist injection accepts.
 good = [
-    "http://nix-cache.nxs.lan",
+    "http://nix-proxy.lan",
     "http://10.201.200.160:80",
     "https://cache.example/with/path",
 ]
 bad = [
-    "ftp://nix-cache.nxs.lan",       # not http(s)
+    "ftp://nix-proxy.lan",       # not http(s)
     'http://x"; bad = "y',           # Nix string breakout
     "http://host with space",
     "http://host\nsubstituters = evil",  # nix.conf smuggling
-    "nix-cache.nxs.lan",             # no scheme
+    "nix-proxy.lan",             # no scheme
 ]
 for url in good:
     assert proxy_screen.CACHE_URL_RE.match(url), url
@@ -56,10 +56,10 @@ os.chmod(store_conf, 0o444)
 conf = os.path.join(work, "nix.conf")
 os.symlink(store_conf, conf)
 
-proxy_screen.rewrite_nix_conf("http://nix-cache.nxs.lan", conf_path=conf)
+proxy_screen.rewrite_nix_conf("http://nix-proxy.lan", conf_path=conf)
 assert not os.path.islink(conf), "symlink should be replaced by a file"
 content = open(conf).read()
-assert "substituters = http://nix-cache.nxs.lan" in content
+assert "substituters = http://nix-proxy.lan" in content
 assert "cache.nixos.org" not in content, "old substituters line must be gone"
 assert "build-users-group = nixbld" in content
 assert "trusted-users = root" in content
@@ -89,10 +89,10 @@ assert "cache.nixos.org" in open(conf2).read(), "no mutation on validation failu
 assert not os.path.exists(url_file)
 print("ok: apply_proxied refuses malformed URLs before touching anything")
 
-proxy_screen.apply_proxied("http://nix-cache.nxs.lan", conf_path=conf2,
+proxy_screen.apply_proxied("http://nix-proxy.lan", conf_path=conf2,
                            url_file=url_file, restart_daemon=False)
-assert open(url_file).read() == "http://nix-cache.nxs.lan\n"
-assert "substituters = http://nix-cache.nxs.lan" in open(conf2).read()
+assert open(url_file).read() == "http://nix-proxy.lan\n"
+assert "substituters = http://nix-proxy.lan" in open(conf2).read()
 print("ok: apply_proxied rewrites conf and records the URL")
 
 # --- probe against a local fixture.

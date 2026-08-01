@@ -17,7 +17,7 @@
       # Prefilled into the Proxy screen's Cache URL field; operators can
       # replace it per install. Consumed by the proxy-screen package
       # (phase 2 of docs/plan.md). See CONTEXT.md for the term.
-      cacheUrlDefault = "http://nix-cache.nxs.lan";
+      cacheUrlDefault = "http://nix-proxy.lan";
 
       calamaresOverlay = final: prev: {
         # The Proxy screen (see CONTEXT.md and docs/adr/0002): a GTK dialog
