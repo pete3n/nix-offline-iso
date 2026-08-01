@@ -1,7 +1,8 @@
 {
-  description = "NixOS offline ISO builder — minimal CLI installer (channels + flake targets)";
+  description = "NixOS offline ISO builder — minimal CLI installer (Determinate Nix)";
 
   inputs = {
+		# Still using community nixpkgs vs. flakehub
     nixpkgs.url = "github:nixos/nixpkgs/nixos-26.05";
 
     # The flake target, included as an input so its system closure and input
@@ -9,6 +10,13 @@
     # The target pins its own nixpkgs (and any other inputs) via its
     # committed flake.lock which gets baked into the ISO.
     target-flake.url = "path:./configs/flake";
+
+    # Determinate Nix for the live installer itself (the target gets it via
+    # configs/flake). Pinned to major version 3, same line the target pins, so
+    # both bake the same Determinate release. Its module replaces the installer's
+    # nix-daemon with determinate-nixd, so all install-time builds run through
+    # Determinate Nix.
+    determinate.url = "https://flakehub.com/f/DeterminateSystems/determinate/3";
   };
 
   outputs =
@@ -16,6 +24,7 @@
       self,
       nixpkgs,
       target-flake,
+      determinate,
       ...
     }@inputs:
     let
@@ -27,6 +36,10 @@
 
       # Force the installer's nix to run offline (no cache.nixos.org probe, no
       # global flake-registry fetch), and enable flakes for the flake install.
+      # Under Determinate these nix.settings still apply: the determinate module
+      # redirects the NixOS-generated nix.conf to /etc/nix/nix.custom.conf, which
+      # determinate-nixd includes, so the empty substituters/registry bind the
+      # Determinate daemon too.
       offlineNixModule =
         { lib, ... }:
         {
@@ -40,6 +53,15 @@
             # Empty string disables fetching the global flake registry.
             flake-registry = "";
           };
+
+          # Determinate's module pins a system registry entry for `nixpkgs`
+          # pointing at a FlakeHub tarball (modules/nixos.nix), which is a
+          # network resolution path that flake-registry = "" does not cover.
+          # For the offline installer, force the whole system registry empty so
+          # no bare flakeref resolution can reach out. (This is installer-only
+          # the installed target keeps Determinate's registry pin, which is the
+          # normal, desirable behaviour once it has network.)
+          nix.registry = lib.mkForce { };
         };
 
       # The CLI installer: the offline-install script + a login hint.
@@ -79,9 +101,12 @@
             pkgs.cryptsetup
             pkgs.lvm2
             pkgs.tmux
+            pkgs.fh
           ];
 
           boot.zfs.forceImportRoot = false;
+          networking.wireless.enable = lib.mkForce false;
+          networking.networkmanager.enable = true;
 
           # Seed a writable copy of the baked config into /tmp/nix-cfg at boot.
           systemd.services.seed-nix-cfg = {
@@ -161,41 +186,7 @@
           }
         );
 
-      # Minimal (console-only) installer base — no desktop, no Calamares.
       baseInstaller = "${nixpkgs}/nixos/modules/installer/cd-dvd/installation-cd-minimal.nix";
-
-      # Channels installer. The target is built separately and its
-      # closure + derivation closure are baked into the ISO store so the install
-      # can rebuild the hardware-config diff offline.
-      mkChannelsInstaller =
-        system:
-        let
-          channelsToplevel =
-            (nixpkgs.lib.nixosSystem {
-              inherit system;
-              modules = [
-                ./configs/channels/configuration.nix
-                { system.includeBuildDependencies = true; }
-              ];
-            }).config.system.build.toplevel;
-        in
-        nixpkgs.lib.nixosSystem {
-          inherit system;
-          specialArgs = { inherit inputs; };
-          modules = [
-            offlineNixModule
-            installerModule
-            baseInstaller
-            (isoModule {
-              cfgDir = ./configs/channels;
-              extraStoreContents = [
-                channelsToplevel
-                channelsToplevel.drvPath
-                nixpkgs.outPath
-              ];
-            })
-          ];
-        };
 
       # Flake installer. Bakes a copy of the target flake whose every input is
       # pinned to a store path (via a rewritten lock) so it evaluates offline,
@@ -227,10 +218,18 @@
                 target "nixos" or expose a single configuration.
               '';
 
-          targetToplevel =
-            (targetConfig.extendModules {
-              modules = [ { system.includeBuildDependencies = true; } ];
-            }).config.system.build.toplevel;
+          # The installed target must evaluate the SAME toplevel it boots, or a
+          # no-change `nixos-rebuild` stops being a no-op and tries to realize a
+          # *different* system offline. So the offline-rebuild dependency set is
+          # declared in the committed target config itself (system.extraDependencies
+          # in configs/flake/configuration.nix), NOT injected here at build time.
+          # We bake exactly that config's toplevel — the one the installer installs
+          # and the target later re-evaluates — keeping installed == evaluated ==
+          # baked. (An earlier version injected the deps only here via
+          # extendModules; the installed system then diverged from what the target
+          # evaluated, so every rebuild rebuilt from scratch and reached the network
+          # — e.g. fetching the Python source tarball.)
+          targetToplevel = targetConfig.config.system.build.toplevel;
 
           # If the target declares a disko layout, bake its partition/format/mount
           # script (and its runtime closure) into the ISO store so offline-install
@@ -274,7 +273,15 @@
                     path = fetched.outPath;
                     narHash = fetched.narHash;
                   }
-                  // (if node.locked ? lastModified then { inherit (node.locked) lastModified; } else { });
+                  // (if node.locked ? lastModified then { inherit (node.locked) lastModified; } else { })
+                  # Carry rev/revCount through the repin (path refs accept
+                  # them). nixpkgs derives system.nixos.versionSuffix from
+                  # self.shortRev, falling back to "dirty" — dropping rev made
+                  # the installed target evaluate a *different* toplevel
+                  # (…-dirty) than the ISO baked (…-<rev>), so every rebuild,
+                  # no-ops included, re-built the whole version-suffix cone.
+                  // (if node.locked ? rev then { inherit (node.locked) rev; } else { })
+                  // (if node.locked ? revCount then { inherit (node.locked) revCount; } else { });
                 };
                 source = fetched.outPath;
               }
@@ -304,6 +311,10 @@
           inherit system;
           specialArgs = { inherit inputs; };
           modules = [
+            # Determinate Nix in the live installer: replaces nix-daemon with
+            # determinate-nixd so install-time builds run through Determinate.
+            # offlineNixModule comes after so its mkForce offline settings win.
+            determinate.nixosModules.default
             offlineNixModule
             installerModule
             baseInstaller
@@ -319,28 +330,18 @@
           ];
         };
 
-      channelsConfigs = forAllSystems (system: mkChannelsInstaller system);
       flakeConfigs = forAllSystems (system: mkFlakeInstaller system);
     in
     {
-      # nixosConfigurations for both variants, per system.
-      nixosConfigurations =
-        (nixpkgs.lib.mapAttrs' (
-          system: cfg: nixpkgs.lib.nameValuePair "channels-${system}" cfg
-        ) channelsConfigs)
-        // (nixpkgs.lib.mapAttrs' (
-          system: cfg: nixpkgs.lib.nameValuePair "flake-${system}" cfg
-        ) flakeConfigs);
+      # nixosConfigurations, per system (flake target only on this branch).
+      nixosConfigurations = nixpkgs.lib.mapAttrs' (
+        system: cfg: nixpkgs.lib.nameValuePair "flake-${system}" cfg
+      ) flakeConfigs;
 
-      # ISO images:
-      #   nix build .#iso.channels-x86_64-linux
+      # ISO image:
       #   nix build .#iso.flake-x86_64-linux
-      iso =
-        (nixpkgs.lib.mapAttrs' (
-          system: cfg: nixpkgs.lib.nameValuePair "channels-${system}" cfg.config.system.build.isoImage
-        ) channelsConfigs)
-        // (nixpkgs.lib.mapAttrs' (
-          system: cfg: nixpkgs.lib.nameValuePair "flake-${system}" cfg.config.system.build.isoImage
-        ) flakeConfigs);
+      iso = nixpkgs.lib.mapAttrs' (
+        system: cfg: nixpkgs.lib.nameValuePair "flake-${system}" cfg.config.system.build.isoImage
+      ) flakeConfigs;
     };
 }

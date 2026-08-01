@@ -6,6 +6,31 @@ DISK=""
 HOST=""
 NO_DISKO=0
 
+# The install-time `nix eval` / `nix build` calls below need the nix-command and
+# flakes experimental features. Don't rely on the ambient nix.conf for this:
+# under Determinate the NixOS-generated config is redirected to
+# /etc/nix/nix.custom.conf (only merged in via determinate-nixd's generated
+# /etc/nix/nix.conf), and the `nix` client on PATH here is upstream Nix, which
+# leaves these features off by default. Force them for this script so it works
+# regardless of which client runs or how the daemon assembled nix.conf. Appended
+# (not overwritten) so any inherited NIX_CONFIG survives.
+#
+# `substituters =` (empty) for the same reason: the offline-neuter lives in
+# nix.custom.conf, which the upstream client doesn't reliably read (see ADR),
+# and only our explicit `nix … --offline` calls are otherwise protected.
+# `nixos-install` below runs nix WITHOUT `--offline` (for the closure copy and
+# the chroot bootloader activation), so that client falls back to the *default*
+# substituter cache.nixos.org and fetches its `nix-cache-info` handshake the
+# moment the copy phase starts — a real (non-fatal) network attempt against the
+# offline guarantee. Forcing substituters empty here blocks that probe for every
+# nix the script spawns. This is env-only and transient: it does NOT rewrite the
+# target's nix.conf, so the installed system keeps its normal substituters after
+# reboot (only the installer is neutered — the target intentionally is not).
+export NIX_CONFIG="${NIX_CONFIG:-}
+extra-experimental-features = nix-command flakes
+substituters =
+trusted-substituters ="
+
 usage() {
   cat <<EOF
 Usage: offline-install [--disk /dev/DEVICE] [--host NAME] [--root DIR] [--no-disko]
@@ -60,15 +85,21 @@ echo ">> Using configuration from $src"
 # Resolve the flake config to install when --host was not given. Mirror the
 # builder's pick so we target the config whose closure is actually baked into
 # the ISO: prefer one named "nixos", else the sole entry. Fall back to the
-# hostname (e.g. a channels target, or a resolution failure) so behaviour is
-# never worse than before.
+# hostname.
 if [ -z "$HOST" ] && [ -e "$src/flake.nix" ]; then
+  echo ">> Resolving the install target from the flake (offline evaluation)..."
+  # Best-effort: pick the baked config's name. The trailing `|| true` is load-
+  # bearing — this script runs under `set -e` (writeShellApplication), and a
+  # bare `HOST="$(cmd)"` assignment adopts the command's exit status, so a
+  # non-zero `nix eval` (e.g. an input that won't resolve offline) would abort
+  # the whole script here instead of falling through to the hostname fallback
+  # below. Keep the failure from being fatal and silent.
   HOST="$(nix eval --offline --raw "$src#nixosConfigurations" --apply '
     cfgs:
     let names = builtins.attrNames cfgs; in
     if cfgs ? nixos then "nixos"
     else if builtins.length names == 1 then builtins.head names
-    else ""' 2>/dev/null)"
+    else ""' 2>/dev/null || true)"
 fi
 if [ -z "$HOST" ]; then
   HOST="$(uname -n)"
@@ -81,6 +112,12 @@ echo ">> Target config: nixosConfigurations.$HOST"
 # the imperative parted + nixos-generate-config path entirely.
 is_disko=0
 if [ "$NO_DISKO" -eq 0 ] && [ -e "$src/flake.nix" ]; then
+  # This eval forces the full NixOS module evaluation of the selected config.
+  # `nix eval` prints nothing while it works and its stderr is discarded below,
+  # so without a heads-up the console just sits blank for minutes before the
+  # disk-erase prompt appears.
+  echo ">> Evaluating nixosConfigurations.$HOST (full config evaluation --"
+  echo "   this can take a few minutes on live media; no output is normal)..."
   if [ "$(nix eval --offline --raw \
             "$src#nixosConfigurations.$HOST.config.system.build" \
             --apply 'build: if build ? diskoScript then "yes" else "no"' \
@@ -103,8 +140,11 @@ if [ "$is_disko" -eq 1 ]; then
     echo "aborted"
     exit 1
   fi
-  # diskoScript's output is baked into the ISO store, so this build is just a
-  # store lookup; running it destroys+formats+mounts per the declaration.
+  # diskoScript's output is baked into the ISO store, so the build itself is
+  # just a store lookup — but `nix build` still re-evaluates the config to
+  # find that path, which is another silent multi-minute wait.
+  echo ">> Resolving the disko script (re-evaluates the config; takes a few"
+  echo "   minutes, then partitioning starts)..."
   disko_script="$(nix build --offline --no-link --print-out-paths \
     "$src#nixosConfigurations.$HOST.config.system.build.diskoScript")"
   "$disko_script"
@@ -191,6 +231,14 @@ fi
 # store that actually has the inputs; `--system` then just copies the closure.
 if [ -e "$ROOT/etc/nixos/flake.nix" ]; then
   echo ">> Flake install: building nixosConfigurations.$HOST in the live store"
+  # Build and install exactly the toplevel the committed config declares — no
+  # extendModules injection. The config carries its own offline-rebuild deps
+  # (system.extraDependencies in its configuration.nix), so this plain toplevel
+  # already includes them. Installing the SAME toplevel the target will later
+  # evaluate is what keeps a post-reboot no-change `nixos-rebuild` a true no-op;
+  # injecting deps only here (as an earlier version did) made the installed
+  # system diverge from what the target evaluated, so every rebuild rebuilt from
+  # scratch and reached the network.
   top="$(nix build --offline --no-link --print-out-paths \
     "$ROOT/etc/nixos#nixosConfigurations.$HOST.config.system.build.toplevel")"
 else
@@ -200,7 +248,41 @@ else
     -I "nixos-config=$ROOT/etc/nixos/configuration.nix")"
 fi
 
-nixos-install --system "$top" --root "$ROOT" --no-root-passwd
+# --no-channel-copy: nixos-install otherwise copies a Nixpkgs channel into the
+# target and registers it, which realizes the channel derivation inside the
+# target chroot. That chroot uses the *target's* nix.conf (default substituter
+# cache.nixos.org — the target is intentionally not offline-neutered), so it
+# reaches the network and fails offline. A flake-managed system has no use for a
+# root channel, so skip it entirely.
+nixos-install --system "$top" --root "$ROOT" --no-root-passwd --no-channel-copy
+
+# Seed the target store with the flake's input source trees so the installed
+# system can re-evaluate its own flake offline. The baked flake.lock pins every
+# input to a /nix/store/*-source path that lives in THIS installer's store (it
+# was seeded into the ISO) but is only consumed at *evaluation* time — it is not
+# part of the built system's runtime closure, so `nixos-install --system` above
+# did not copy it. Without these paths on the target, `nixos-rebuild switch`
+# after reboot fails with `path '/nix/store/...-source' does not exist` the
+# moment it tries to read the flake inputs. Copy those source closures now.
+if [ -e "$ROOT/etc/nixos/flake.nix" ]; then
+  echo ">> Copying flake input sources into the target store (for offline rebuilds)"
+  # Pull every path-pinned input out of the baked lock. Non-path nodes (and the
+  # lockfile root node, which has no `locked`) fall through to null via `or` and
+  # are filtered out.
+  mapfile -t src_paths < <(
+    nix eval --offline --raw --impure --expr "
+      let lock = builtins.fromJSON (builtins.readFile \"$ROOT/etc/nixos/flake.lock\");
+      in builtins.concatStringsSep \"\n\" (
+        builtins.filter (path: path != null)
+          (map (node: node.locked.path or null) (builtins.attrValues lock.nodes)))
+    "
+  )
+  if [ "${#src_paths[@]}" -gt 0 ]; then
+    # `--to "$ROOT"`: a bare path is a chroot local store rooted there, so this
+    # populates $ROOT/nix/store and registers the paths in the target's Nix DB.
+    nix copy --offline --no-check-sigs --to "$ROOT" "${src_paths[@]}"
+  fi
+fi
 
 echo ">> Installation complete. Reboot into your new system."
 echo "   Log in with the credentials from your configuration."
