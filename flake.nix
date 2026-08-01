@@ -138,6 +138,27 @@
                 # Terminal access to the Proxy screen for debugging; the
                 # wrapped desktop entry is the normal path.
                 environment.systemPackages = [ pkgs.proxy-screen ];
+
+                # The ISO is built from a flake, so nixpkgs' nixosSystem sets
+                # NIX_PATH=nixpkgs=flake:nixpkgs in the live session (see
+                # nixpkgs-flake.nix, setNixPath). Resolving a flake: search
+                # path entry requires the flakes feature, which installer
+                # images leave disabled — nixos-install's
+                # nix-build '<nixpkgs/nixos>' dies with "experimental Nix
+                # feature 'flakes' is disabled". (Hydra's stock ISO is
+                # channel-built and never has that entry.) Enable the
+                # features in the LIVE environment only: flake:nixpkgs then
+                # resolves via the registry pin to the nixpkgs tree already
+                # baked into the ISO, no network involved. The Target is
+                # unaffected — its generated config enables nothing.
+                nix.settings.experimental-features = [
+                  "nix-command"
+                  "flakes"
+                ];
+                # With flakes on, keep the global registry off in the live
+                # environment: the nixpkgs pin is local, and
+                # channels.nixos.org is unreachable behind the Cache proxy.
+                nix.settings.flake-registry = "";
               }
             )
           ];

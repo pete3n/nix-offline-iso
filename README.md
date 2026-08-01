@@ -92,6 +92,19 @@ the install.
 - The locale page's **GeoIP lookup**: same reachability problem; timezone
   selection is simply manual.
 
+## Live environment adjustments
+
+The live session enables the `nix-command` and `flakes` features and disables
+the global flake-registry fetch (the automatic `flake:nixpkgs` registry pin to
+the ISO's baked nixpkgs is kept). This is load-bearing, not cosmetic:
+flake-built ISOs — like this one — get `NIX_PATH=nixpkgs=flake:nixpkgs` from
+nixpkgs' own `nixosSystem`, and without the flakes feature `nixos-install`
+cannot resolve `<nixpkgs/nixos>` and dies with "experimental Nix feature
+'flakes' is disabled". Hydra's channel-built stock ISO never has that
+search-path entry, which is why the stock installer gets away without it.
+The Target is unaffected: its generated config enables no experimental
+features.
+
 ## Limitations
 
 - **Unfree packages that fetch from vendor URLs fail a Proxied install.**

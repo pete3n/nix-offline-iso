@@ -11,6 +11,21 @@ and run the VM matrix below. Two things only that pass can confirm: the real
 `calamares.desktop` Exec shape (build guards fail loudly on drift) and the
 GTK/sudo flow inside the live GNOME session.
 
+**First host test findings (2026-08-01):** the Proxy screen, launch wiring,
+and live reroute all worked. The install then failed at "building the
+configuration" with "experimental Nix feature 'flakes' is disabled" — two
+stacked causes, both fixed and regression-tested: (1) the persisted
+`flake-registry = ""` is flakes-gated and fails the target's nix.conf
+validation (now an advisory comment only, and the overlay test validates
+persisted settings through the same `nix config show` pipeline); (2) the
+primary thrower — flake-built ISOs get `NIX_PATH=nixpkgs=flake:nixpkgs`
+from nixpkgs' `nixosSystem`, and `nixos-install`'s
+`nix-build '<nixpkgs/nixos>'` cannot resolve a `flake:` search-path entry
+without the flakes feature, which installer images leave disabled. The live
+environment now enables `nix-command`/`flakes` (resolution goes through the
+baked registry pin, no network). Note: the offline graphical branch is also
+flake-built and carries the same landmine for channels-mode installs.
+
 Design anchors (settled in the 2026-08-01 grill session):
 
 - The Cache URL is a **Nix substituter base URL** (path-routed appliance,
