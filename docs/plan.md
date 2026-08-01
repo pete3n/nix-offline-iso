@@ -4,6 +4,13 @@ Working document for the `nixos-26.05-graphical-proxy` branch. Language is in
 `CONTEXT.md`; the dialog-not-viewstep decision is `docs/adr/0002`. Delete this
 file when the work lands.
 
+**Status (2026-08-01):** phases 0–3 are implemented and committed, including
+the phase-4 sim harnesses (`tools/test-overlay.sh`, `tools/test-proxy-screen.sh`),
+which pass in-jail. What remains is phase 4's host-side half: build the ISO
+and run the VM matrix below. Two things only that pass can confirm: the real
+`calamares.desktop` Exec shape (build guards fail loudly on drift) and the
+GTK/sudo flow inside the live GNOME session.
+
 Design anchors (settled in the 2026-08-01 grill session):
 
 - The Cache URL is a **Nix substituter base URL** (path-routed appliance,

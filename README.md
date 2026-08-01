@@ -1,147 +1,143 @@
-# NixOS Offline ISO Builder
+# NixOS Proxied-Install ISO Builder
 
-Build offline ISO images of the NixOS Calamares installer that include a
-user-provided system configuration that can be installed with **no network connection**, 
-by including all of its dependencies in the ISO's Nix store.
+Builds an ISO of the **stock graphical NixOS installer** (Calamares, GNOME)
+for networks whose only route to the internet is a filtering LAN cache
+appliance — a path-routed nginx reverse proxy in front of `cache.nixos.org`
+(the **Cache proxy**; see `CONTEXT.md` for this branch's language).
 
-Targets the **NixOS 26.05** `calamares-nixos-extensions`. 
-Two install types are supported:
+Unlike this repo's offline branches, nothing is baked into the ISO: the full
+stock install flow (users, desktop choice, unfree toggle, partitioning) is
+kept. The one addition is the **Proxy screen**, shown before Calamares
+starts, where the operator confirms or replaces the Cache URL.
 
-- **channels** - a plain `configuration.nix` (tracks a NixOS channel, no flake)
-- **flake** - a `flake.nix` (installed offline; see [Flake offline support](#flake-offline-support))
+Targets **NixOS 26.05**.
 
-## Usage
+## How an install works
 
-1. [Install Nix](https://nixos.org/download) with flakes enabled on an online
-   build host with plenty of free disk (see below).
-2. Put your system config in either `configs/channels/` or `configs/flake/`.
-   Keep the provided `hardware-configuration.nix` template. It is needed to build 
-   the ISO closure and is overwritten by the real hardware scan at install time. 
-   If there are significant differences between the target hardware and the 
-   `hardware-configuration.nix` template, then you may need to replace the template 
-   config with the generated one so that the ISO includes necessary dependencies. 
-3. For a flake target, the installer selects the `nixosConfigurations.<name>`
-   attribute automatically: it uses the sole attribute if your flake defines
-   exactly one, otherwise it expects one named `nixos` (the example uses `nixos`).
-4. Build:
+1. Boot the ISO. The GNOME live session autostarts the installer; the Proxy
+   screen appears first.
+2. **Proxied install** (the default): the Cache URL field is prefilled
+   (`http://nix-proxy.lan`) and probed automatically — the probe fetches
+   `<url>/nix-cache-info` and expects a Nix binary-cache answer. Edit the
+   URL and *Test connection* as needed; *Continue* unlocks only after the
+   probe passes. Continuing reroutes the live environment's substituters to
+   the Cache URL (restarting `nix-daemon`) and records the URL for step 5.
+3. **Direct install** (escape hatch, e.g. for testing the ISO on an open
+   network): probes `cache.nixos.org` itself; nothing is rerouted and
+   nothing is persisted. The install behaves exactly like the stock ISO.
+4. The stock Calamares flow runs. All packages substitute through the Cache
+   proxy (Proxied) or directly (Direct).
+5. For a Proxied install, the generated `/etc/nixos/configuration.nix` on
+   the installed system additionally contains:
+
+   ```nix
+     # Route Nix through the LAN cache proxy that performed this install.
+     # Written by the proxied installer; remove if this machine leaves
+     # the filtered network.
+     nix.settings.substituters = [ "http://nix-proxy.lan" ];
+     # The global flake registry lives on channels.nixos.org, which the
+     # cache proxy does not expose; disable the fetch instead of letting
+     # flake commands hang on it.
+     nix.settings.flake-registry = "";
+   ```
+
+   so the first `nixos-rebuild switch` works on the filtered network. To
+   undo, delete the block and rebuild (sensible only once the machine has
+   another route to packages).
+
+Quitting the Proxy screen leaves the live session without starting
+Calamares; relaunch from the dock/menu entry.
+
+## Building
 
 ```
-# channels target
-nix build .#iso.channels-x86_64-linux
-
-# flake target
-nix build .#iso.flake-x86_64-linux
+nix build .#iso.proxy-x86_64-linux     # or .#iso.proxy-aarch64-linux
 ```
 
-5. Write the ISO to disk with `dd` or equivalent tool.
-6. Boot the target and run the installer. Partition the target disk **partitioning** in 
-   Calamares installer. The disk configuration will be used. The desktop, software, 
-   and user-configuration (user/password/hostname) pages are removed since the 
-   provided `configuration.nix` owns those; the remaining GUI choices (locale, 
-   keyboard) are also overwritten by it, so just click through them. For a **flake** 
-   target the installer picks your `nixosConfigurations.<name>` automatically (the 
-   sole attribute, or one named `nixos`), so there is no hostname to enter. The 
-   install may appear to sit for a long time while it copies and rebuilds from the 
-   store. Toggle the log to see activity.
+Write the result to a USB stick with `dd` or similar. To change the
+prefilled Cache URL, edit `cacheUrlDefault` in `flake.nix` and rebuild; at
+install time the field is editable either way (an operator can also set
+`PROXY_SCREEN_DEFAULT_URL` when launching `proxy-screen` manually).
 
-## How it works
+## What the Cache proxy must serve
 
-The installer is the stock NixOS graphical Calamares (GNOME) image, with the
-`calamares-nixos-extensions` package overlayed by the (`flake.nix`).
+The Cache URL is a plain **Nix substituter base URL** — this project never
+sets `http_proxy`-style variables. The appliance must pass these paths
+through to `cache.nixos.org`, on plain HTTP or HTTPS:
 
-The overlay:
+- `<base>/nix-cache-info`
+- `<base>/<hash>.narinfo`
+- `<base>/nar/…`
 
-1. Ships a modified `calamares/welcome.conf` that drops the `internet`
-   requirement check.
-2. Injects a config-copy step into the installer's `nixos` module
-   (`calamares/inject/config-copy.py`) that copies your files from
-   `/tmp/nix-cfg` or `/iso/nix-cfg` into `/etc/nixos`, preserving the
-   freshly generated `hardware-configuration.nix`.
-3. Removes the Calamares pages whose choices your configuration overrides:
-   the user-configuration page (your config owns users, passwords, and the
-   hostname, see [Users and passwords](#users-and-passwords)), the
-   desktop-environment selection page, and the free/unfree software page.
-   Whatever these would have generated is replaced by the copied config in step 2. 
-   For a flake, the target `nixosConfigurations` attribute is auto-selected 
-   (sole attribute, or one named `nixos`) instead of coming from the removed 
-   hostname field.
-4. For a flake config, builds the system in the live installer store and
-   installs the result with `nixos-install --system` (see
-   [Flake offline support](#flake-offline-support)).
+Everything else may 403. GET/HEAD is enough. No key material moves: narinfos
+are signed by `cache.nixos.org` itself and the installer verifies them
+against the compiled-in `cache.nixos.org-1` trusted key, so a pass-through
+proxy cannot tamper with substituted paths.
 
-The installer is also configured to run nix **fully offline** during install
-(`nix.settings.substituters = [ ]` and `flake-registry = ""`). Without this,
-`nixos-install` reaches out to `cache.nixos.org` (binary-cache probe) and
-`channels.nixos.org` (global flake registry) and fails with no network.
-Because `nixos-generate-config` regenerates `hardware-configuration.nix` for 
-the target machine at install time, the installed system differs slightly 
-from what was pre-built, so a small rebuild must be performed. The ISO bakes 
-the target's **build/derivation closure** so that the rebuild runs offline 
-from sources already in the store.
+Only the primary cache is wired at install time. Additional prefix-routed
+upstreams the appliance may expose (cachix mirrors, `/github/` source
+tarballs for flake inputs) are for post-install use and don't participate in
+the install.
+
+## Stock behaviors this ISO removes
+
+- The welcome page's **internet requirement**: it probes `geoip.kde.org` and
+  `cache.nixos.org` directly (both unreachable behind the appliance) and
+  runs at startup, before any screen could collect the Cache URL. The Proxy
+  screen's probe replaces it — see `docs/adr/0002` for why the screen is a
+  dialog in front of Calamares rather than a page inside it.
+- The locale page's **GeoIP lookup**: same reachability problem; timezone
+  selection is simply manual.
+
+## Limitations
+
+- **Unfree packages that fetch from vendor URLs fail a Proxied install.**
+  Unfree packages (NVIDIA userspace drivers, CUDA) are not on
+  `cache.nixos.org`, so Nix builds them locally and fetches their sources
+  from vendor domains (`download.nvidia.com`, …). Those fetches bypass the
+  substituter mechanism entirely and cannot transit a path-routed reverse
+  proxy. Ticking "allow unfree" on hardware whose scan pulls such a driver
+  fails mid-install with a fetch error naming the vendor URL. Options:
+  install free-only and add unfree bits post-install via configuration
+  management, or front a cache that actually holds the unfree outputs
+  (e.g. `cuda-maintainers.cachix.org` plus its trusted key) on the
+  appliance.
+- **DNS**: a name-form Cache URL must resolve via the live session's
+  DHCP-provided resolver. If the LAN doesn't serve that name, use the IP
+  form (e.g. `http://10.201.200.160`).
+- Running `calamares` directly from a terminal bypasses the Proxy screen
+  (the desktop entry and autostart do not). Use `proxy-screen-launch`, or
+  run `proxy-screen` first, if you need the proxied flow from a shell.
+
+## Testing
+
+- `tools/test-overlay.sh <extensions-src>` — simulates the overlay's
+  `postInstall` against a real `calamares-nixos-extensions` source tree
+  (e.g. `pkgs/by-name/ca/calamares-nixos-extensions/src` in the pinned
+  nixpkgs): anchors, guards, stock page sequence, and the injected
+  persist logic end to end.
+- `tools/test-proxy-screen.sh` — displayless tests of the Proxy screen's
+  logic: URL validation, the symlinked-`nix.conf` rewrite, `--apply`
+  ordering, probe semantics against a local HTTP fixture.
+- Before trusting a build, run the VM matrix in `docs/plan.md` (phase 4):
+  Proxied install end-to-end against a real or fake appliance including a
+  first-boot `nixos-rebuild switch`, a Direct install on an open network,
+  and the no-network probe gate.
 
 ## Layout
 
 ```
-flake.nix                     ISO builder + overlay
+flake.nix                     ISO builder + overlay (cacheUrlDefault lives here)
 calamares/
   welcome.conf                replaces upstream's (internet requirement removed)
-  inject/config-copy.py       block injected into the installer's nixos module
-configs/
-  channels/                   example channels target (configuration.nix)
-  flake/                      example flake target (flake.nix + configuration.nix)
+  locale.conf                 replaces upstream's (geoip removed)
+  proxy-screen.py             the Proxy screen (GTK dialog + --apply root helper)
+  proxy-screen-launch.in      launcher template: screen gates, then stock Exec
+  inject/proxy-persist.py     injected into the nixos module: persists the Cache URL
+tools/
+  test-overlay.sh             overlay simulation + injection tests
+  test-proxy-screen.sh        Proxy screen logic tests
+CONTEXT.md                    this branch's language (Cache proxy, Cache URL, …)
+docs/adr/                     decisions (0002: dialog, not a Calamares viewstep)
+docs/plan.md                  implementation plan (host-side verification pending)
 ```
-
-### Users and passwords
-
-The provided `configuration.nix` sets users and their passwords. 
-**Set a password in your config** ( e.g. `users.users.<name>.initialPassword`,
-`hashedPassword`, or `hashedPasswordFile`), and for `root` if you want
-root login). The example configs use `initialPassword = "test"` for `root` and
-`tester`. You can log in as `tester` / `test`.
-
-### Dynamic configuration
-
-You can customize a configuration at install time by placing it in `/tmp/nix-cfg`.
-The installer will ignore the baked-in `/iso/nix-cfg` configuration, so you
-can edit the config after booting the live environment. Remember though, you can 
-safely remove items from a configuration, but if your edits add dependencies 
-that aren't in the ISO store, the offline install will fail.
-
-## Flake offline support
-
-Offline `nixos-install --flake` requires several workarounds (see
-[nix#8953](https://github.com/NixOS/nix/issues/8953)):
-
-1. **Evaluate offline** by pinning *every* input to a store path. At ISO-build
-   time the builder bakes a *copy* of your flake with a rewritten `flake.lock`:
-   for each input it reads your committed lock, fetches that input's source, and
-   repoints the input's `locked` ref to the resulting `/nix/store/…` path. Your
-   `flake.nix` is copied verbatim — `inputs` and `outputs` are untouched — so
-   `follows` edges (e.g. an input following your `nixpkgs`) keep working. A `github`
-   `original` with a `path` `locked` needs no registry and no network. This
-   works for any real multi-input flake, not just a lone `nixpkgs`.
-
-2. **Build offline** in the live install environment store, passing the finished
-   path to `nixos-install --system`, which just copies the closure to the
-   target. The ISO bakes exactly one config's closure: the entry named `nixos`,
-   or the sole entry if there is only one (the Calamares flake install
-   auto-selects the same attribute).
-
-3. **Bake the inputs** into the closure. The ISO store carries the target
-   system's built closure, its derivation closure (`.drv`s + source tarballs, for
-   the hardware-config rebuild), and the source tree of every flake input.
-
-You **must** commit a git-tracked `configs/flake/flake.lock` (generate it with
-`nix flake lock ./configs/flake`); the builder reads it to learn which input
-revisions to pin. An untracked lock is invisible to the flake and the build will
-tell you it is missing.
-
-**After install**, the target's `/etc/nixos/flake.nix` is unchanged — it still
-carries your original `github:` input refs — but its `flake.lock` points every
-input at a store path. For online rebuilds later, run `nix flake update` to
-re-lock against the network.
-
-### Free disk space
-
-The ISO is large (20+ GB depending on the config). Keep ~3× the ISO size free
-(100+ GB recommended) on the build host's Nix store partition.
