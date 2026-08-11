@@ -58,23 +58,36 @@ def probe(base_url, timeout_seconds=PROBE_TIMEOUT_SECONDS):
 
 
 def rewrite_nix_conf(cache_url, conf_path=NIX_CONF_PATH):
-    """Point the live environment's substituters at the Cache proxy.
+    """Point the live environment's substituters at the Cache proxy and empty
+    the global flake-registry.
 
     /etc/nix/nix.conf on the live ISO is a symlink into the read-only store,
-    so replace it with a regular file: the same content minus any existing
-    substituters line.
+    so replace it with a regular file: the same content minus the lines for the
+    keys we set, with our replacements appended.
+
+    Emptying flake-registry stops the install-time nix (flakes are enabled on
+    this ISO) from eagerly fetching the stock registry from
+    channels.nixos.org/flake-registry.json, which is unreachable behind the
+    Cache proxy and otherwise fails nixos-install fatally.
     """
     with open(conf_path, "r") as conf_file:
         original_lines = conf_file.read().splitlines()
+    # Drop any existing lines for the keys we set below so re-running is
+    # idempotent and the stock defaults don't linger.
+    rewritten_keys = {"substituters", "flake-registry"}
     kept = [
         line
         for line in original_lines
-        if line.split("=", 1)[0].strip() != "substituters"
+        if line.split("=", 1)[0].strip() not in rewritten_keys
     ]
     kept += [
         "",
         "# Rerouted to the Cache proxy by the proxied installer (Proxy screen).",
         "substituters = " + cache_url,
+        # A proxied install needs no global registry, and well-formed flakes pin
+        # their inputs explicitly. nix.registry stays free for a custom LAN
+        # registry later.
+        "flake-registry =",
     ]
     replacement_path = conf_path + ".proxy-screen"
     with open(replacement_path, "w") as replacement_file:

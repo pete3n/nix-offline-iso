@@ -50,6 +50,7 @@ with open(store_conf, "w") as fh:
     fh.write(
         "build-users-group = nixbld\n"
         "substituters = https://cache.nixos.org/\n"
+        "flake-registry = https://channels.nixos.org/flake-registry.json\n"
         "trusted-users = root\n"
     )
 os.chmod(store_conf, 0o444)
@@ -61,16 +62,23 @@ assert not os.path.islink(conf), "symlink should be replaced by a file"
 content = open(conf).read()
 assert "substituters = http://nix-proxy.lan" in content
 assert "cache.nixos.org" not in content, "old substituters line must be gone"
+# The stock global flake-registry is unreachable behind the proxy; it must be
+# emptied, not left pointing at channels.nixos.org.
+assert "flake-registry =" in content
+assert "channels.nixos.org" not in content, "stock flake-registry line must be gone"
 assert "build-users-group = nixbld" in content
 assert "trusted-users = root" in content
 assert open(store_conf).read().count("cache.nixos.org") == 1, "store file untouched"
-print("ok: rewrite_nix_conf replaces the symlink, swaps only substituters")
+print("ok: rewrite_nix_conf swaps substituters and empties flake-registry")
 
-# Idempotency: applying twice leaves exactly one substituters line.
+# Idempotency: applying twice leaves exactly one substituters and one
+# (empty) flake-registry line.
 proxy_screen.rewrite_nix_conf("http://10.201.200.160:80", conf_path=conf)
 content = open(conf).read()
 lines = [l for l in content.splitlines() if l.startswith("substituters =")]
 assert lines == ["substituters = http://10.201.200.160:80"], lines
+reg_lines = [l for l in content.splitlines() if l.startswith("flake-registry")]
+assert reg_lines == ["flake-registry ="], reg_lines
 print("ok: rewrite_nix_conf is idempotent")
 
 # --- apply_proxied: ordering contract and validation.
