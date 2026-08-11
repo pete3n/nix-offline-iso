@@ -3,7 +3,13 @@
     # `cfg += cfgtail` closes the generated attrset. When the operator chose
     # a Proxied install, the Proxy screen wrote the Cache URL to
     # /run/nix-cache-url; point the target's nix at the Cache proxy so the
-    # first nixos-rebuild works on the filtered network. 
+    # first nixos-rebuild works on the filtered network.
+    #
+    # Only ungated settings may be emitted here: the stock target enables no
+    # experimental features, and nixos-install validates the generated
+    # nix.conf with warnings promoted to errors — a flakes-gated setting
+    # (e.g. flake-registry) fails the whole install. The live installer's
+    # nix.conf (proxy-screen.py) is different: flakes are enabled there.
     _proxy_url_file = "/run/nix-cache-url"
     _proxy_url = None
     try:
