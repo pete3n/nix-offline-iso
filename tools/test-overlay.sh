@@ -80,7 +80,7 @@ echo "ok: locale.conf geoip-free, glibcLocales re-substituted"
 s=$out/etc/calamares/settings.conf
 for keep in welcome locale keyboard users packagechooser 'notesqml@unfree' \
             partition summary mount nixos umount finished; do
-  grep -qE "^[[:space:]]*-[[:space:]]*${keep[[:space:]]}*\$" "$s" \
+  grep -qE "^[[:space:]]*-[[:space:]]*${keep}[[:space:]]*\$" "$s" \
     || { echo "FAIL: stock sequence entry '$keep' missing from settings.conf"; exit 1; }
 done
 echo "ok: full stock page/job sequence intact"
