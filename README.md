@@ -195,6 +195,15 @@ fail evaluation. Keep filesystem-independent hardware bits (kernel modules,
 used as-is. Use `--no-disko` to partition/mount yourself while still letting
 disko own `fileSystems`.
 
+disko always wipes the device(s) **declared in the config** — `--disk` cannot
+redirect it, so passing `--disk` to a disko target is a hard error rather
+than a silently ignored flag (the installer names the declared devices,
+verifies they exist on the machine, and asks for confirmation before
+wiping). If the target machine's disk is named differently (a VM's virtio
+disk is `/dev/vda`, not `/dev/sda`), edit the device in `/tmp/nix-cfg`'s
+disko config and re-run. `tools/test-offline-install-args.sh` locks this
+behavior down.
+
 ### Free disk space
 
 The ISO is large (depending on the config) — though smaller than the graphical

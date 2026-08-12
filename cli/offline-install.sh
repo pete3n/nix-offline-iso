@@ -5,6 +5,8 @@ ROOT=/mnt
 DISK=""
 HOST=""
 NO_DISKO=0
+NO_VERIFY=0
+CFG_DIR=""
 
 export NIX_CONFIG="${NIX_CONFIG:-}
 extra-experimental-features = nix-command flakes
@@ -13,7 +15,7 @@ trusted-substituters ="
 
 usage() {
   cat <<EOF
-Usage: offline-install [--disk /dev/DEVICE] [--host NAME] [--root DIR] [--no-disko]
+Usage: offline-install [--disk /dev/DEVICE] [--host NAME] [--root DIR] [--no-disko] [--config DIR]
 
   --disk DEV   Wipe DEV and create a single-disk layout (GPT: 1024MiB ESP + ext4
                root), mount it at --root, then install. DESTROYS ALL DATA ON DEV.
@@ -26,10 +28,17 @@ Usage: offline-install [--disk /dev/DEVICE] [--host NAME] [--root DIR] [--no-dis
   --no-disko   Flake configs only: do not let disko partition, even if the
                config declares a layout. You must partition and mount yourself
                (or use --disk); disko still owns the fileSystems config.
+  --config DIR Configuration source directory. Default: /tmp/nix-cfg (the
+               editable copy seeded at boot), else the baked /iso/nix-cfg.
+  --no-verify  Skip the post-install read-back verification of the target's
+               Nix store (it re-reads the copied closure from disk to catch
+               storage that silently loses writes).
 
 If the flake config declares a disko layout, disko partitions, formats and
-mounts the disk(s) it describes (at /mnt) — --disk and manual partitioning are
-not used, and nixos-generate-config is skipped (disko owns fileSystems).
+mounts the disk(s) it DECLARES (at /mnt); nixos-generate-config is skipped
+(disko owns fileSystems). Passing --disk to a disko target is an error —
+disko cannot be redirected to another device from the command line; edit the
+device in the config instead, or override disko entirely with --no-disko.
 EOF
 }
 
@@ -39,6 +48,8 @@ while [ "$#" -gt 0 ]; do
     --host) HOST="$2"; shift 2 ;;
     --root) ROOT="$2"; shift 2 ;;
     --no-disko) NO_DISKO=1; shift ;;
+    --no-verify) NO_VERIFY=1; shift ;;
+    --config) CFG_DIR="$2"; shift 2 ;;
     -h | --help) usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage; exit 1 ;;
   esac
@@ -49,15 +60,20 @@ if [ "$(id -u)" -ne 0 ]; then
   exit 1
 fi
 
-# Locate the configuration source. /tmp/nix-cfg (editable copy seeded at boot)
-# wins over the baked-in read-only /iso/nix-cfg. Found before partitioning
-# because a disko target partitions the disk(s) declared in this config.
-src=/tmp/nix-cfg
-if [ ! -e "$src/configuration.nix" ] && [ ! -e "$src/flake.nix" ]; then
-  src=/iso/nix-cfg
+# Locate the configuration source. --config wins; otherwise /tmp/nix-cfg (the
+# editable copy seeded at boot) wins over the baked-in read-only /iso/nix-cfg.
+# Found before partitioning because a disko target partitions the disk(s)
+# declared in this config.
+if [ -n "$CFG_DIR" ]; then
+  src="$CFG_DIR"
+else
+  src=/tmp/nix-cfg
+  if [ ! -e "$src/configuration.nix" ] && [ ! -e "$src/flake.nix" ]; then
+    src=/iso/nix-cfg
+  fi
 fi
 if [ ! -e "$src/configuration.nix" ] && [ ! -e "$src/flake.nix" ]; then
-  echo "No configuration.nix or flake.nix in /tmp/nix-cfg or /iso/nix-cfg." >&2
+  echo "No configuration.nix or flake.nix in ${CFG_DIR:-/tmp/nix-cfg or /iso/nix-cfg}." >&2
   exit 1
 fi
 echo ">> Using configuration from $src"
@@ -85,27 +101,58 @@ echo ">> Target config: nixosConfigurations.$HOST"
 # Detect a disko target: a flake whose selected config exposes a disko layout
 # (system.build.diskoScript). Such a config owns both the partition layout and
 # the fileSystems config, so we let disko do the partitioning/mounting and skip
-# the imperative parted + nixos-generate-config path entirely.
+# the imperative parted + nixos-generate-config path entirely. The same
+# evaluation extracts the device(s) the layout declares, so the operator gets
+# told exactly what will be wiped and we can sanity-check they exist.
 is_disko=0
+disko_devices=""
 if [ "$NO_DISKO" -eq 0 ] && [ -e "$src/flake.nix" ]; then
   echo ">> Evaluating nixosConfigurations.$HOST (full config evaluation --"
   echo "   this can take a few minutes on live media; no output is normal)..."
-  if [ "$(nix eval --offline --raw \
-            "$src#nixosConfigurations.$HOST.config.system.build" \
-            --apply 'build: if build ? diskoScript then "yes" else "no"' \
-            2>/dev/null)" = "yes" ]; then
+  disko_probe="$(nix eval --offline --raw \
+    "$src#nixosConfigurations.$HOST.config" \
+    --apply 'config:
+      if config.system.build ? diskoScript then
+        builtins.concatStringsSep " "
+          (map (disk: disk.device) (builtins.attrValues config.disko.devices.disk))
+      else "@no-disko@"' \
+    2>/dev/null || echo "@no-disko@")"
+  if [ "$disko_probe" != "@no-disko@" ]; then
     is_disko=1
+    disko_devices="$disko_probe"
   fi
 fi
 
 if [ "$is_disko" -eq 1 ]; then
-  # disko owns the disk layout; our simple --disk layout would conflict with it.
+  # disko owns the disk layout: it wipes the device(s) DECLARED IN THE CONFIG,
+  # and --disk cannot redirect it. Silently proceeding on the declared disk
+  # when the operator explicitly named a different one is how the wrong disk
+  # gets erased — refuse instead.
   if [ -n "$DISK" ]; then
-    echo "Ignoring --disk $DISK: this is a disko target and partitions the" >&2
-    echo "disk(s) declared in its config. Pass --no-disko to override." >&2
+    echo "ERROR: --disk $DISK conflicts with this config's disko layout, which" >&2
+    echo "partitions the device(s) it declares: ${disko_devices:-(unknown)}" >&2
+    echo "Refusing to guess which disk you meant. Either:" >&2
+    echo "  - re-run WITHOUT --disk to let disko wipe the declared device(s), or" >&2
+    echo "  - edit the disko device in $src to $DISK and re-run, or" >&2
+    echo "  - pass --no-disko (with --disk or manual partitioning); note the" >&2
+    echo "    config's disko-declared fileSystems must still match what you make." >&2
+    exit 1
   fi
+  # A declared device that does not exist on this machine means the config was
+  # written for different hardware (common in VMs: virtio disks appear as
+  # /dev/vda, not /dev/sda). Catch it before disko tries to wipe anything.
+  for device in $disko_devices; do
+    if [ ! -e "$device" ]; then
+      echo "ERROR: the config's disko layout declares $device, which does not" >&2
+      echo "exist on this machine. Available disks:" >&2
+      lsblk -dno NAME,SIZE,MODEL 2>/dev/null | sed 's/^/  /' >&2 || true
+      echo "Edit the disko device in $src to match, then re-run." >&2
+      exit 1
+    fi
+  done
   echo ">> disko target: this WIPES and partitions the disk(s) declared in your"
-  echo "   config, then formats and mounts them at /mnt."
+  echo "   config, then formats and mounts them at /mnt:"
+  echo "     ${disko_devices:-(devices could not be determined from the config)}"
   printf 'Type YES to continue: '
   read -r confirm
   if [ "$confirm" != "YES" ]; then
@@ -235,6 +282,28 @@ if [ -e "$ROOT/etc/nixos/flake.nix" ]; then
     # populates $ROOT/nix/store and registers the paths in the target's Nix DB.
     nix copy --offline --no-check-sigs --to "$ROOT" "${src_paths[@]}"
   fi
+fi
+
+# Read the installed store back from disk before declaring success. A
+# completed install only proves the closure existed in the page cache;
+# storage that silently loses writeback (thin-provisioned pools out of real
+# space, VM disk cache modes that drop flushes, failing media) surfaces
+# after reboot as "invalid ELF header" in random binaries. Dropping the page
+# cache forces the verification to read the platter, not the cache.
+if [ "$NO_VERIFY" -eq 0 ]; then
+  echo ">> Verifying the installed store (read-back from disk; takes a minute)..."
+  sync
+  echo 3 > /proc/sys/vm/drop_caches 2>/dev/null || true
+  if ! nix store verify --offline --store "$ROOT" --all --no-trust; then
+    echo "ERROR: the installed Nix store failed read-back verification:" >&2
+    echo "data written during this install did not survive on disk. Common" >&2
+    echo "causes: a thin-provisioned/overcommitted disk that ran out of real" >&2
+    echo "space mid-write, a VM disk cache mode that loses flushes, or" >&2
+    echo "failing media. Do NOT boot this system; fix the storage and" >&2
+    echo "re-run the install." >&2
+    exit 1
+  fi
+  echo ">> Store verification passed."
 fi
 
 echo ">> Installation complete. Reboot into your new system."
