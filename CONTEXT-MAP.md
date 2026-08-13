@@ -1,8 +1,7 @@
 # Context Map
 
-Repo-wide language and the map of this repo's bounded contexts. Written
-2026-08-12 with [ADR 0008](./docs/adr/0008-single-main-variant-matrix.md)
-(single-`main` restructure); paths marked *(post-flatten)* arrive with it.
+Repo-wide language and the map of this repo's bounded contexts
+([ADR 0008](./docs/adr/0008-single-main-variant-matrix.md)).
 
 ## Language (repo-wide)
 
@@ -34,15 +33,12 @@ glossary and their terms deliberately conflict.
 
 ## Contexts
 
-- [Offline contract](./CONTEXT.md) — zero-network installs; everything the
-  Target needs is baked into the ISO. *(post-flatten: `docs/offline/CONTEXT.md`,
-  merging this file's glossary with the stock branches'.)*
-- Proxied contract — installs whose only egress is the Cache proxy + LAN;
-  the ISO bakes nothing and owns no URLs. Today on branch
-  `nixos-26.05-cli-determinate-proxy` (`CONTEXT.md` there); *(post-flatten:
-  `docs/proxied/CONTEXT.md`, merging the cli-proxied and graphical-proxied
-  glossaries — their term conflicts, e.g. "Proxy setup" vs "Proxy screen",
-  get resolved in that merge.)*
+- [Offline contract](./docs/offline/CONTEXT.md) — zero-network installs;
+  everything the Target needs is baked into the ISO. Products:
+  `nixos-cli-offline`, `nixos-graphical-offline`, `determinate-cli-offline`.
+- [Proxied contract](./docs/proxied/CONTEXT.md) — installs whose only egress
+  is the Cache proxy + LAN; the ISO bakes nothing and owns no URLs. Products:
+  `determinate-cli-proxied`, `nixos-graphical-proxied`.
 
 ## Relationships
 

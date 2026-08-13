@@ -1,0 +1,8 @@
+#!/bin/sh
+# Generated at build time by the graphical-proxy overlay (flake.nix), which
+# substitutes @proxyScreen@ and captures @origExec@ from the stock
+# calamares.desktop Exec line. Shows the Proxy screen first; only when it
+# exits 0 (Continue pressed and for a Proxied install, the live reroute
+# succeeded) does the stock Calamares launch run.
+@proxyScreen@ || exit $?
+exec @origExec@

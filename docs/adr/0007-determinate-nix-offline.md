@@ -1,5 +1,9 @@
 # Ship Determinate Nix on an offline installer, hard-neutered
 
+> Formerly ADR 0001 on `nixos-26.05-cli-determinate`; renumbered by the
+> ADR 0008 flatten to resolve the collision with 0001-offline-rebuild-deps
+> (the stock lineage's ADR). Citations of "finding #6" point here.
+
 On the `nixos-26.05-cli-determinate` branch we replace upstream Nix with
 Determinate Systems' Nix distribution on both the Installer and the Target,
 while keeping the install 100% offline. Determinate is an online-first
