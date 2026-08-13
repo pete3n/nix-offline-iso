@@ -1,3 +1,9 @@
 result
 result/
 result-*
+
+# Tripwire, not a hiding place (ADR 0008): fleet-internal notes may sit in
+# the working tree while developing, but their system of record is the
+# fleet's PRIVATE repo — nothing fleet-shaped may ever be committed here.
+docs/fleet/
+**/fleet-*

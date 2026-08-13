@@ -6,6 +6,9 @@ every dependency in the ISO's Nix store. This branch (`nixos-26.05-cli-determina
 ships Determinate Nix as the Nix that runs on both the installer and the
 installed system.
 
+This is the **offline contract** glossary. Repo-wide language — the product
+matrix and its axes — lives in [`CONTEXT-MAP.md`](./CONTEXT-MAP.md).
+
 ## Language
 
 **Offline install**:
