@@ -170,7 +170,7 @@
     "flake-parts_2": {
       "inputs": {
         "nixpkgs-lib": [
-          "target-flake",
+          "target-determinate-cli-offline",
           "determinate",
           "nix",
           "nixpkgs"
@@ -219,12 +219,12 @@
       "inputs": {
         "flake-compat": "flake-compat_2",
         "gitignore": [
-          "target-flake",
+          "target-determinate-cli-offline",
           "determinate",
           "nix"
         ],
         "nixpkgs": [
-          "target-flake",
+          "target-determinate-cli-offline",
           "determinate",
           "nix",
           "nixpkgs"
@@ -434,24 +434,86 @@
         "type": "indirect"
       }
     },
+    "nixpkgs_7": {
+      "locked": {
+        "lastModified": 1785386831,
+        "narHash": "sha256-sPS3CaXH8RAT3FZRuy4VcV47iuYIWMMfa0GbyJKC3o4=",
+        "owner": "nixos",
+        "repo": "nixpkgs",
+        "rev": "21ea275a7c46aef9d4d6ddc962e6d562e9d94183",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nixos",
+        "ref": "nixos-26.05",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "nixpkgs_8": {
+      "locked": {
+        "lastModified": 1785386831,
+        "narHash": "sha256-sPS3CaXH8RAT3FZRuy4VcV47iuYIWMMfa0GbyJKC3o4=",
+        "owner": "nixos",
+        "repo": "nixpkgs",
+        "rev": "21ea275a7c46aef9d4d6ddc962e6d562e9d94183",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nixos",
+        "ref": "nixos-26.05",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
     "root": {
       "inputs": {
         "determinate": "determinate",
         "nixpkgs": "nixpkgs_3",
-        "target-flake": "target-flake"
+        "target-determinate-cli-offline": "target-determinate-cli-offline",
+        "target-nixos-cli-offline": "target-nixos-cli-offline",
+        "target-nixos-graphical-offline": "target-nixos-graphical-offline"
       }
     },
-    "target-flake": {
+    "target-determinate-cli-offline": {
       "inputs": {
         "determinate": "determinate_2",
         "nixpkgs": "nixpkgs_6"
       },
       "locked": {
-        "path": "./configs/flake",
+        "path": "./variants/determinate-cli-offline/configs/flake",
         "type": "path"
       },
       "original": {
-        "path": "./configs/flake",
+        "path": "./variants/determinate-cli-offline/configs/flake",
+        "type": "path"
+      },
+      "parent": []
+    },
+    "target-nixos-cli-offline": {
+      "inputs": {
+        "nixpkgs": "nixpkgs_7"
+      },
+      "locked": {
+        "path": "./variants/nixos-cli-offline/configs/flake",
+        "type": "path"
+      },
+      "original": {
+        "path": "./variants/nixos-cli-offline/configs/flake",
+        "type": "path"
+      },
+      "parent": []
+    },
+    "target-nixos-graphical-offline": {
+      "inputs": {
+        "nixpkgs": "nixpkgs_8"
+      },
+      "locked": {
+        "path": "./variants/nixos-graphical-offline/configs/flake",
+        "type": "path"
+      },
+      "original": {
+        "path": "./variants/nixos-graphical-offline/configs/flake",
         "type": "path"
       },
       "parent": []

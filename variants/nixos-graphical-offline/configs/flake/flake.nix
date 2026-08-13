@@ -3,7 +3,7 @@
 
   inputs = {
     # Indirect nixpkgs reference resolved via flake registry
-    nixpkgs.url = "nixpkgs";
+    nixpkgs.url = "github:nixos/nixpkgs/nixos-26.05";
   };
 
   outputs =

@@ -53,9 +53,11 @@ directories, and retire product branches entirely.**
   are rewritten). Where branches diverged on shared code, the Determinate
   line wins (it is newest) gated by the harnesses proving the nixos products
   still pass. Nothing pushes until: all five outputs build, per-variant
-  harnesses are green, the determinate products' closures evaluate
-  **identical** to their branch builds (the flatten must not change their
-  content), and one real VM install passes per *contract*. Then: push
+  harnesses are green, the determinate offline product's **target
+  toplevel** evaluates drv-identical to its branch build (the flatten must
+  not change what gets installed; the ISO image derivation itself
+  necessarily differs — the baked config dir's store path moved with the
+  tree), and one real VM install passes per *contract*. Then: push
   `main`, push the clean branch tips, freeze every product branch with a
   pointer commit ("flattened into `main` as `<product>` at `v26.05`"),
   flip the GitHub default branch.

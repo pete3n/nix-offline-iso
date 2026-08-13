@@ -3,7 +3,7 @@
 set -euo pipefail
 
 script_dir=$(cd "$(dirname "$0")" && pwd)
-flake_dir=${1:-$script_dir/../configs/flake}
+flake_dir=${1:-$script_dir/../variants/determinate-cli-offline/configs/flake}
 flake_dir=$(cd "$flake_dir" && pwd)
 
 # Select the config the way the ISO builder does: the entry named "nixos",

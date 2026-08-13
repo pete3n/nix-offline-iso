@@ -1,319 +1,95 @@
 {
-  description = "NixOS offline ISO builder — minimal CLI installer (Determinate Nix)";
+  description = "NixOS installer ISOs — offline and LAN-proxied installs, upstream and Determinate Nix";
 
+  # One builder flake for the whole product matrix (ADR 0008). Each offline
+  # product's example target is a path-input subflake with its own committed
+  # lock; production ISOs point the input at a private flake instead:
+  #   nix build .#installer-iso-determinate-cli-offline \
+  #     --override-input target-determinate-cli-offline path:/your/flake
+  # The proxied products deliberately have no target input — they bake
+  # nothing (ADR 0003).
   inputs = {
-		# Still using community nixpkgs vs. flakehub
     nixpkgs.url = "github:nixos/nixpkgs/nixos-26.05";
 
-    # The flake target, included as an input so its system closure and input
-    # source trees can be pulled into the ISO store for offline install.
-    # The target pins its own nixpkgs (and any other inputs) via its
-    # committed flake.lock which gets baked into the ISO.
-    target-flake.url = "path:./configs/flake";
-
-    # Determinate Nix for the live installer itself (the target gets it via
-    # configs/flake). Pinned to major version 3.
+    # Determinate Nix for the determinate products' live installers (their
+    # targets get Determinate from their own flake's pin). Pinned to major
+    # version 3, matching what the example target bakes.
     determinate.url = "https://flakehub.com/f/DeterminateSystems/determinate/3";
+
+    target-nixos-cli-offline.url = "path:./variants/nixos-cli-offline/configs/flake";
+    target-nixos-graphical-offline.url = "path:./variants/nixos-graphical-offline/configs/flake";
+    target-determinate-cli-offline.url = "path:./variants/determinate-cli-offline/configs/flake";
   };
 
   outputs =
     {
       self,
       nixpkgs,
-      target-flake,
       determinate,
       ...
     }@inputs:
     let
-      systems = [
-        "x86_64-linux"
-        "aarch64-linux"
-      ];
-      forAllSystems = nixpkgs.lib.genAttrs systems;
+      shared = import ./nix/lib.nix { inherit nixpkgs; };
 
-      # Force the installer's nix to run offline (no cache.nixos.org probe, no
-      # global flake-registry fetch), and enable flakes for the flake install.
-      offlineNixModule =
-        { lib, ... }:
-        {
-          nix.settings = {
-            experimental-features = [
-              "nix-command"
-              "flakes"
-            ];
-            substituters = lib.mkForce [ ];
-            trusted-substituters = lib.mkForce [ ];
-            # Empty string disables fetching the global flake registry.
-            flake-registry = "";
-          };
-
-          # Determinate's module pins a system registry entry for `nixpkgs`
-          # pointing at a FlakeHub tarball (modules/nixos.nix), which is a
-          # network resolution path that flake-registry = "" does not cover.
-          nix.registry = lib.mkForce { };
+      # Instantiate every product's wiring for one system. Explicit rather
+      # than looped: five products, five lines, greppable.
+      productsFor = system: {
+        nixos-cli-offline = import ./variants/nixos-cli-offline/iso.nix {
+          inherit nixpkgs shared system;
+          targetFlake = inputs.target-nixos-cli-offline;
         };
-
-      # The CLI installer: the offline-install script + a login hint.
-      offlineInstaller =
-        pkgs:
-        pkgs.writeShellApplication {
-          name = "offline-install";
-          runtimeInputs = [
-            pkgs.coreutils
-            pkgs.util-linux
-            pkgs.parted
-            pkgs.dosfstools
-            pkgs.e2fsprogs
-            pkgs.nixos-install-tools
-            pkgs.nix
-          ];
-          text = builtins.readFile ./cli/offline-install.sh;
+        nixos-graphical-offline = import ./variants/nixos-graphical-offline/iso.nix {
+          inherit nixpkgs shared system;
+          targetFlake = inputs.target-nixos-graphical-offline;
         };
-
-      # A console cheat-sheet of manual partitioning commands (encrypted root +
-      # swap). Shipped on the ISO so it is readable offline at the install
-      # prompt.
-      partitionHelp =
-        pkgs:
-        pkgs.writeShellApplication {
-          name = "partition-help";
-          runtimeInputs = [ pkgs.coreutils ];
-          text = "cat ${./cli/partition-help.txt}";
+        determinate-cli-offline = import ./variants/determinate-cli-offline/iso.nix {
+          inherit nixpkgs determinate shared system;
+          targetFlake = inputs.target-determinate-cli-offline;
         };
-
-      installerModule =
-        { pkgs, lib, ... }:
-        {
-          environment.systemPackages = [
-            (offlineInstaller pkgs)
-            (partitionHelp pkgs)
-            pkgs.cryptsetup
-            pkgs.lvm2
-            pkgs.tmux
-            pkgs.fh
-          ];
-
-          boot.zfs.forceImportRoot = false;
-          networking.wireless.enable = lib.mkForce false;
-          networking.networkmanager.enable = true;
-
-          # Seed a writable copy of the baked config into /tmp/nix-cfg at boot.
-          systemd.services.seed-nix-cfg = {
-            description = "Seed an editable config copy into /tmp/nix-cfg";
-            wantedBy = [ "multi-user.target" ];
-            path = [ pkgs.coreutils ];
-            unitConfig = {
-              RequiresMountsFor = "/iso";
-              ConditionPathExists = [
-                "/iso/nix-cfg"
-                "!/tmp/nix-cfg"
-              ];
-            };
-            serviceConfig = {
-              Type = "oneshot";
-              RemainAfterExit = true;
-            };
-            script = ''
-              cp -rT /iso/nix-cfg /tmp/nix-cfg
-              chmod -R u+w /tmp/nix-cfg
-            '';
-          };
-
-          # Shown at the console login of the live installer.
-          users.motd = lib.mkForce ''
-	NixOS offline installer
-
-	Keyboard not US-QWERTY? Change the console layout, e.g. loadkeys dvorak
-	(back to QWERTY: loadkeys us  |  list layouts: localectl list-keymaps)
-
-	1. Partition and mount your target at /mnt
-		- For help with partitioning commands run: partition-help
-		- Let the installer auto-partition a basic Linux layout 
-		 (EFI, swap, root partition) with: sudo offline-install --disk /dev/sdX
-		- If disko has been configured, just run: sudo offline-install --host <name>
-
-	2. Edit /tmp/nix-cfg/configuration.nix if needed (e.g. for LUKS device)
-
-	3. Run: sudo offline-install
-
-	The target host configuration is located at: /tmp/nix-cfg
-          '';
-
-          # Allow SSH in to run offline-install. The stock installer
-          # enables sshd but leaves root key-only with no password; set one here.
-          # These credentials are for the throwaway installer environment only.
-          services.openssh.enable = true;
-          services.openssh.settings.PermitRootLogin = lib.mkForce "yes";
-          # `password` (not initialPassword) so it applies regardless of the
-          # installer's users.mutableUsers setting. Installer-only, plaintext.
-          users.users.root.initialHashedPassword = lib.mkForce null;
-          users.users.root.password = "nixos";
-          # users.users.root.openssh.authorizedKeys.keys = [ "ssh-ed25519 AAAA... you@host" ];
+        determinate-cli-proxied = import ./variants/determinate-cli-proxied/iso.nix {
+          inherit nixpkgs determinate shared system;
         };
-
-      # Shared ISO image module. `cfgDir` is copied to /iso/nix-cfg; the
-      # offline-install script copies it into /etc/nixos at install time.
-      isoModule =
-        {
-          cfgDir,
-          extraStoreContents,
-        }:
-        (
-          { config, ... }:
-          {
-            isoImage = {
-              contents = [
-                {
-                  source = cfgDir;
-                  target = "/nix-cfg";
-                }
-              ];
-              storeContents = [ config.system.build.toplevel ] ++ extraStoreContents;
-              includeSystemBuildDependencies = false;
-              squashfsCompression = "gzip -Xcompression-level 1";
-            };
-          }
-        );
-
-      baseInstaller = "${nixpkgs}/nixos/modules/installer/cd-dvd/installation-cd-minimal.nix";
-
-      # Flake installer. Bakes a copy of the target flake whose every input is
-      # pinned to a store path (via a rewritten lock) so it evaluates offline,
-      # plus the target's built + derivation closures and each input's source.
-      #
-      # Reads the target's own committed flake.lock and, for each input,
-      # swaps its `locked` ref for the store path of that input's source.
-      mkFlakeInstaller =
-        system:
-        let
-          pkgs = nixpkgs.legacyPackages.${system};
-
-          # Pick which nixosConfiguration's closure to bake. At install time the
-          # script selects a config by hostname (--host), but the ISO must bake
-          # exactly one config's closure so the offline build finds its store
-          # paths.
-          targetConfigs = target-flake.nixosConfigurations;
-          targetNames = builtins.attrNames targetConfigs;
-          targetConfig =
-            if targetConfigs ? nixos then
-              targetConfigs.nixos
-            else if builtins.length targetNames == 1 then
-              targetConfigs.${builtins.head targetNames}
-            else
-              throw ''
-                nix-offline-iso: configs/flake exposes multiple nixosConfigurations
-                (${builtins.concatStringsSep ", " targetNames}) and none named "nixos".
-                The ISO bakes exactly one config's closure, so name your install
-                target "nixos" or expose a single configuration.
-              '';
-
-          targetToplevel = targetConfig.config.system.build.toplevel;
-
-          # If the target declares a disko layout, bake its partition/format/mount
-          # script (and its runtime closure) into the ISO store so offline-install
-          # can partition the disk fully offline. 
-          diskoStoreContents =
-            if targetConfig.config.system.build ? diskoScript then
-              [ targetConfig.config.system.build.diskoScript ]
-            else
-              [ ];
-
-          # The target flake must ship a committed lock and must fetch the revs.
-          # It must also be git-tracked to be visible to Nix.
-          targetLockPath = ./configs/flake/flake.lock;
-          rawLock =
-            if builtins.pathExists targetLockPath then
-              builtins.fromJSON (builtins.readFile targetLockPath)
-            else
-              throw ''
-                nix-offline-iso: configs/flake/flake.lock is missing. The flake
-                target must carry a committed, git-tracked lock so its inputs can
-                be pinned into the ISO for offline install. Generate it with:
-                  nix flake lock ./configs/flake && git add configs/flake/flake.lock
-              '';
-
-          # Fetch each input's source (online, at ISO-build time) and repin its
-          # `locked` ref to that store path. `lastModified` is stripped from the
-          # fetch args (it is an output of fetchTree, not an accepted input) but
-          # kept in the rewritten node.
-          pinNode =
-            _name: node:
-            if node ? locked then
-              let
-                fetched = fetchTree (removeAttrs node.locked [ "lastModified" ]);
-              in
-              {
-                value = node // {
-                  locked = {
-                    type = "path";
-                    path = fetched.outPath;
-                    narHash = fetched.narHash;
-                  }
-                  // (if node.locked ? lastModified then { inherit (node.locked) lastModified; } else { })
-                  # Carry rev/revCount through the repin (path refs accept
-                  # them).
-                  // (if node.locked ? rev then { inherit (node.locked) rev; } else { })
-                  // (if node.locked ? revCount then { inherit (node.locked) revCount; } else { });
-                };
-                source = fetched.outPath;
-              }
-            else
-              {
-                value = node;
-                source = null;
-              };
-
-          pinned = builtins.mapAttrs pinNode rawLock.nodes;
-          offlineLock = builtins.toJSON (
-            rawLock // { nodes = builtins.mapAttrs (_name: entry: entry.value) pinned; }
-          );
-          # Every input source, to seed into the ISO store for the offline build.
-          inputSources = builtins.filter (path: path != null) (
-            map (entry: entry.source) (builtins.attrValues pinned)
-          );
-
-          flakeCfgDir = pkgs.runCommand "offline-flake-cfg" { } ''
-            cp -r ${./configs/flake} $out
-            chmod -R u+w $out
-            cp ${pkgs.writeText "flake.lock" offlineLock} $out/flake.lock
-            chmod u+w $out/flake.lock
-          '';
-        in
-        nixpkgs.lib.nixosSystem {
-          inherit system;
-          specialArgs = { inherit inputs; };
-          modules = [
-            # Determinate Nix in the live installer: replaces nix-daemon with
-            # determinate-nixd so install-time builds run through Determinate.
-            # offlineNixModule comes after so its mkForce offline settings win.
-            determinate.nixosModules.default
-            offlineNixModule
-            installerModule
-            baseInstaller
-            (isoModule {
-              cfgDir = flakeCfgDir;
-              extraStoreContents = [
-                targetToplevel
-                targetToplevel.drvPath
-              ]
-              ++ diskoStoreContents
-              ++ inputSources;
-            })
-          ];
+        nixos-graphical-proxied = import ./variants/nixos-graphical-proxied/iso.nix {
+          inherit nixpkgs shared system;
         };
-
-      flakeConfigs = forAllSystems (system: mkFlakeInstaller system);
+      };
     in
     {
-      # nixosConfigurations, per system (flake target only on this branch).
-      nixosConfigurations = nixpkgs.lib.mapAttrs' (
-        system: cfg: nixpkgs.lib.nameValuePair "flake-${system}" cfg
-      ) flakeConfigs;
+      # ISO images: nix build .#installer-iso-<product>
+      # The nixos-*-offline products also ship the channels-target shape as
+      # installer-iso-<product>-channels.
+      packages = shared.forAllSystems (
+        system:
+        let
+          products = productsFor system;
+        in
+        {
+          installer-iso-nixos-cli-offline = products.nixos-cli-offline.isos.flake;
+          installer-iso-nixos-cli-offline-channels = products.nixos-cli-offline.isos.channels;
+          installer-iso-nixos-graphical-offline = products.nixos-graphical-offline.isos.flake;
+          installer-iso-nixos-graphical-offline-channels = products.nixos-graphical-offline.isos.channels;
+          installer-iso-determinate-cli-offline = products.determinate-cli-offline.isos.flake;
+          installer-iso-determinate-cli-proxied = products.determinate-cli-proxied.isos.proxied;
+          installer-iso-nixos-graphical-proxied = products.nixos-graphical-proxied.isos.proxied;
+        }
+      );
 
-      # ISO image:
-      #   nix build .#iso.flake-x86_64-linux
-      iso = nixpkgs.lib.mapAttrs' (
-        system: cfg: nixpkgs.lib.nameValuePair "flake-${system}" cfg.config.system.build.isoImage
-      ) flakeConfigs;
+      # The installer systems behind the ISOs, for inspection and debugging:
+      # nix eval .#nixosConfigurations.<product>-<shape>-<system>.config...
+      nixosConfigurations = nixpkgs.lib.mergeAttrsList (
+        map (
+          system:
+          let
+            products = productsFor system;
+          in
+          nixpkgs.lib.concatMapAttrs (
+            productName: product:
+            nixpkgs.lib.mapAttrs' (
+              shapeName: installerConfig:
+              nixpkgs.lib.nameValuePair "${productName}-${shapeName}-${system}" installerConfig
+            ) product.configs
+          ) products
+        ) shared.systems
+      );
     };
 }

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Simulate the calamares-nixos-extensions overlay postInstall from flake.nix
+# Simulate the calamares-nixos-extensions overlay postInstall from the
+# nixos-graphical-proxied variant (variants/nixos-graphical-proxied/iso.nix)
 # against a real extensions source tree, without building anything. Catches
 # the anchor/guard drift class of break (which bit the graphical branch
 # twice) and functionally exercises the injected proxy-persist logic.
@@ -22,12 +23,12 @@ fake_locales=/nix/store/00000000000000000000000000000000-fake-glibc-locales
 
 # Cut everything before the extensions attr first so the range match lands on the right one.
 sed -n '/calamares-nixos-extensions = prev.calamares-nixos-extensions.overrideAttrs/,$p' \
-    "$flake_dir/flake.nix" \
-  | sed -n "/postInstall = (old.postInstall or/,/^          '';/{p; /^          '';/q}" \
+    "$flake_dir/variants/nixos-graphical-proxied/iso.nix" \
+  | sed -n "/postInstall = (old.postInstall or/,/^      '';/{p; /^      '';/q}" \
   | sed '1d;$d' \
-  | sed "s|\${./calamares/welcome.conf}|$flake_dir/calamares/welcome.conf|g
-         s|\${./calamares/locale.conf}|$flake_dir/calamares/locale.conf|g
-         s|\${./calamares/inject/proxy-persist.py}|$flake_dir/calamares/inject/proxy-persist.py|g
+  | sed "s|\${../../calamares/welcome-proxied.conf}|$flake_dir/calamares/welcome-proxied.conf|g
+         s|\${../../calamares/locale.conf}|$flake_dir/calamares/locale.conf|g
+         s|\${../../calamares/inject/proxy-persist.py}|$flake_dir/calamares/inject/proxy-persist.py|g
          s|\${final.glibcLocales}|$fake_locales|g" \
   > "$work/postinstall.sh"
 
@@ -208,10 +209,10 @@ PYEOF
 # (sh -c + pkexec). The build-time guards catch any upstream drift.
 fake_proxy_screen=/nix/store/00000000000000000000000000000000-proxy-screen/bin/proxy-screen
 
-sed -n '/calamares-nixos = prev.calamares-nixos.overrideAttrs/,$p' "$flake_dir/flake.nix" \
-  | sed -n "/postInstall = (old.postInstall or/,/^          '';/{p; /^          '';/q}" \
+sed -n '/calamares-nixos = prev.calamares-nixos.overrideAttrs/,$p' "$flake_dir/variants/nixos-graphical-proxied/iso.nix" \
+  | sed -n "/postInstall = (old.postInstall or/,/^      '';/{p; /^      '';/q}" \
   | sed '1d;$d' \
-  | sed "s|\${./calamares/proxy-screen-launch.in}|$flake_dir/calamares/proxy-screen-launch.in|g
+  | sed "s|\${../../calamares/proxy-screen-launch.in}|$flake_dir/calamares/proxy-screen-launch.in|g
          s|\${final.proxy-screen}/bin/proxy-screen|$fake_proxy_screen|g" \
   > "$work/desktop-patch.sh"
 if grep -n '\${' "$work/desktop-patch.sh"; then
