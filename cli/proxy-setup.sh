@@ -1,10 +1,9 @@
-# proxy-setup — point the live installer's Nix at the Cache proxy.
+# proxy-setup: points the live installer's Nix at the cache proxy.
 #
-# Step 4 of the Proxied install (see CONTEXT.md: Proxy setup): confirm or
-# replace the prefilled Cache URL, gate on the Reachability probe, then
-# declare the URL as the live environment's only substituter and record it
-# for proxied-install. There is no --direct mode: a failing probe means no
-# Proxied install.
+# This completes step 4 of the proxied install process: confirm or replace the 
+# prefilled cache URL, verify connectivity, then declare the URL as the live 
+# environment's only substituter and record it for proxied-install. 
+# There is no --direct mode: failed connectivity means no proxied install.
 
 DEFAULT_URL="http://nix-proxy.lan"
 
@@ -24,7 +23,7 @@ Usage: proxy-setup [CACHE_URL]
 
 Point the live installer's Nix at the Cache proxy. CACHE_URL is a Nix
 substituter base URL (e.g. http://nix-proxy.lan, or the IP form when the
-name does not resolve) — never an http_proxy value. With no argument,
+name does not resolve). It is not an http_proxy value. With no argument,
 prompts with an editable default.
 EOF
 }
@@ -60,8 +59,8 @@ if ! printf '%s' "$url" | grep -Eq '^https?://[A-Za-z0-9.:/_-]+$'; then
 fi
 
 # Reachability probe: the Cache proxy must answer /nix-cache-info like a
-# binary cache. This replaces any notion of an internet check — it probes
-# the appliance, not the internet.
+# binary cache. This replaces any notion of an internet check. It probes
+# the cache, not the internet.
 echo ">> Probing $url/nix-cache-info ..."
 if ! info="$(curl --fail --silent --show-error --max-time 10 "$url/nix-cache-info")"; then
   echo "Reachability probe FAILED: no answer from $url" >&2
@@ -79,10 +78,10 @@ fi
 # /etc/nix/nix.custom.conf is an environment.etc symlink into the read-only
 # store (the determinate module retargets the generated nix.conf there), so
 # replace the symlink with a real file: the original content minus any
-# substituters line, plus ours. determinate-nixd's generated /etc/nix/nix.conf
-# includes this file, so clients pick it up on their next read; restart the
-# daemon (nix-daemon.service execs determinate-nixd) so daemon-side
-# substitution re-reads it too.
+# substituters line, plus the modification. determinate-nixd's generated 
+# /etc/nix/nix.conf includes this file, so clients pick it up on their next 
+# read; restart the daemon (nix-daemon.service execs determinate-nixd) 
+# so daemon-side substitution re-reads it too.
 tmp="$(mktemp)"
 if [ -e "$CUSTOM_CONF" ]; then
   # grep exits 1 when nothing survives the filter; that is a valid result

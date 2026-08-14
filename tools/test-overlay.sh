@@ -34,6 +34,7 @@ sed -n '/calamares-nixos-extensions = prev.calamares-nixos-extensions.overrideAt
 
 # Any leftover interpolation means flake.nix gained one this script does not
 # know how to resolve: update the sed above.
+# shellcheck disable=2016
 if grep -n '\${' "$work/postinstall.sh"; then
   echo "FAIL: unresolved Nix interpolation in extracted postInstall"; exit 1
 fi
@@ -58,6 +59,7 @@ substituteInPlace() {
     "$file" "$from" "$to"
 }
 
+# shellcheck disable=1091
 . "$work/postinstall.sh"
 echo "ok: postInstall ran to completion"
 
@@ -203,10 +205,10 @@ assert cfg == "BASE\n" and not warnings
 print("ok: absent Cache URL file leaves cfg untouched")
 PYEOF
 
-# --- simulate the calamares-nixos desktop-entry patch against a fixture ---
-# The real calamares.desktop only exists in the built package; this tests OUR
+# Simulate the calamares-nixos desktop-entry patch against a fixture:
+# The real calamares.desktop only exists in the built package; this tests
 # capture/generate/rewrite logic against the Exec shape upstream ships
-# (sh -c + pkexec). The build-time guards catch any upstream drift.
+# (sh -c + pkexec). The build-time guards catch any upstream changes.
 fake_proxy_screen=/nix/store/00000000000000000000000000000000-proxy-screen/bin/proxy-screen
 
 sed -n '/calamares-nixos = prev.calamares-nixos.overrideAttrs/,$p' "$flake_dir/variants/nixos-graphical-proxied/iso.nix" \
@@ -215,11 +217,12 @@ sed -n '/calamares-nixos = prev.calamares-nixos.overrideAttrs/,$p' "$flake_dir/v
   | sed "s|\${../../calamares/proxy-screen-launch.in}|$flake_dir/calamares/proxy-screen-launch.in|g
          s|\${final.proxy-screen}/bin/proxy-screen|$fake_proxy_screen|g" \
   > "$work/desktop-patch.sh"
+# shellcheck disable=2016
 if grep -n '\${' "$work/desktop-patch.sh"; then
   echo "FAIL: unresolved Nix interpolation in extracted desktop patch"; exit 1
 fi
 
-# stdenv's substitute, reduced to the --subst-var-by form we use.
+# stdenv's substitute, reduced to the --subst-var-by form.
 substitute() {
   local src=$1 dst=$2; shift 2
   cp "$src" "$dst"
@@ -241,6 +244,8 @@ Exec=sh -c "pkexec calamares"
 Icon=calamares
 DESKTOP
 
+
+# shellcheck disable=1091
 . "$work/desktop-patch.sh"
 
 launcher=$out/bin/proxy-screen-launch

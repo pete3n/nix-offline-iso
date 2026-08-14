@@ -11,7 +11,7 @@
 let
   bake = shared.mkFlakeTargetBake {
     inherit system targetFlake;
-    productName = "determinate-cli-offline";
+    variantName = "determinate-cli-offline";
   };
 
   installer = nixpkgs.lib.nixosSystem {

@@ -1,6 +1,6 @@
 # NixOS Offline ISO Builder
 
-> Product documentation for `nixos-graphical-offline`, carried over from its pre-flatten
+> Variant documentation for `nixos-graphical-offline`, carried over from its pre-flatten
 > branch. Paths like `configs/flake/` mean this directory's `configs/`;
 > build commands may be stale — the authoritative output name is
 > `nix build .#installer-iso-nixos-graphical-offline` (see the repo README).

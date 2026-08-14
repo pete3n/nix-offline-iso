@@ -1,18 +1,16 @@
 #!/usr/bin/env bash
-# test-proxied-install — component probe for the proxied CLI installer.
+# test-proxied-install: component probe for the proxied CLI installer.
 #
 # Exercises the decision logic of cli/proxy-setup.sh and
-# cli/proxied-install.sh as a plain user against a localhost mock of the
-# Cache proxy — no VM, no root, no appliance. The NIX_PROXY_TEST_PREFIX hook
-# in both scripts relocates the system files they touch into a sandbox and
-# skips root-only actions (daemon restart, real /etc writes).
+# cli/proxied-install.sh as a plain user against a localhost simulation of the
+# Cache proxy. The NIX_PROXY_TEST_PREFIX hook in both scripts relocates the system 
+# files they touch into a sandbox and skips root-only actions (daemon restart, real /etc writes).
 #
-# Needs: bash, curl, python3 (the mock), nix (lock parsing in the Pin match
-# check — a pure fromJSON eval, no network).
+# Needs: bash, curl, python3 (the sim), nix (lock parsing in the pin match
+# check with a pure fromJSON eval).
 #
-# NOT covered here, by design (see README "Acceptance"): the
-# substituter-declaration warning (needs a real NixOS eval), the install
-# itself, and on-target rebuilds — those run against the live appliance.
+# Not covered here: the substituter-declaration warning (needs a real NixOS eval), 
+# the install itself, and on-target rebuilds.
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -71,7 +69,7 @@ pi_run() {
   NIX_PROXY_TEST_PREFIX="$prefix" bash -eu -o pipefail "$repo/cli/proxied-install.sh" "$@"
 }
 
-# ---- mock Cache proxy ------------------------------------------------------
+# Simulated Cache proxy:
 # /nix-cache-info answers like a binary cache; /junk/nix-cache-info answers
 # 200 with junk (a captive-portal-ish wrong answer); anything else 404.
 python3 - "$sandbox" <<'PY' &
@@ -129,7 +127,7 @@ elif ! curl --silent --fail --max-time 5 "$mock_url/nix-cache-info" | grep -q St
   echo "       normal host to exercise them"
 fi
 
-# ---- proxy-setup cases -----------------------------------------------------
+# Proxy-setup cases
 if [ "$loopback" -eq 1 ]; then
   sb="$sandbox/ps-unreachable"
   mkdir -p "$sb"
@@ -143,8 +141,8 @@ if [ "$loopback" -eq 1 ]; then
 
   sb="$sandbox/ps-happy"
   mkdir -p "$sb"
-  # Pre-seed a conf as the ISO would have it: our line must replace the
-  # substituters line and keep the rest.
+  # Pre-seed a conf as the ISO would have it: 
+	# replace the substituters line and keep the rest.
   printf 'substituters = \nexperimental-features = nix-command flakes\n' > "$sb/nix.custom.conf"
   run_case "probe: good proxy passes and configures" 0 "Cache proxy configured" \
     -- ps_run "$sb" "$mock_url"
@@ -177,13 +175,13 @@ mkdir -p "$sb"
 run_case "url shape: rejects a smuggled setting" 1 "Not a usable Cache URL" \
   -- ps_run "$sb" 'http://x.lan a=b'
 
-# ---- proxied-install cases -------------------------------------------------
+# Proxied-install cases
 sb="$sandbox/pi-nosetup"
 mkdir -p "$sb"
 run_case "install: refuses without proxy-setup" 1 "proxy-setup" \
   -- pi_run "$sb"
 
-# From here on, pretend proxy-setup ran.
+# Pretend proxy-setup ran.
 mkurl() {
   mkdir -p "$1"
   printf '%s\n' "$mock_url" > "$1/nix-cache-url"
@@ -197,7 +195,7 @@ run_case "install: refuses without a flake.nix" 1 "No flake\.nix" \
   -- pi_run "$sb" --config "$cfg"
 
 # Lock-less configs are allowed: locking happens through the proxy at build
-# time, so the script must note the skipped Pin match and carry on to the
+# time, so the script must note the skipped pin match and carry on to the
 # mount gate. nix may write a lock into the fixture on first eval, so each
 # case gets a fresh fixture.
 write_lockless() {
@@ -267,7 +265,7 @@ if command -v nix > /dev/null 2>&1; then
   write_fixture "$cfg" "$hash_a"
   mkdir -p "$sandbox/not-a-mountpoint"
   # A matching pin sails past the check (no prompt), degrades gracefully
-  # through the fixture's unevaluable config, and dies at the mount gate —
+  # through the fixture's unevaluable config, and dies at the mount gate,
   # proving the decision chain order.
   run_case "pin match: match proceeds to the mount gate" 1 "Nothing is mounted" \
     -- pi_run "$sb" --config "$cfg" --root "$sandbox/not-a-mountpoint"

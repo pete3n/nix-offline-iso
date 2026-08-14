@@ -1,6 +1,6 @@
 # NixOS Proxied-Install ISO Builder
 
-> Product documentation for `nixos-graphical-proxied`, carried over from its pre-flatten
+> Variant documentation for `nixos-graphical-proxied`, carried over from its pre-flatten
 > branch. Paths like `configs/flake/` mean this directory's `configs/`;
 > build commands may be stale — the authoritative output name is
 > `nix build .#installer-iso-nixos-graphical-proxied` (see the repo README).

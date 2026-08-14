@@ -16,7 +16,7 @@
 let
   bake = shared.mkFlakeTargetBake {
     inherit system targetFlake;
-    productName = "nixos-cli-offline";
+    variantName = "nixos-cli-offline";
   };
 
   installerModule = shared.mkOfflineCliInstallerModule { };

@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
-# Argument-safety regression test for cli/offline-install.sh, entirely offline
-# and non-root: `id`, `nix`, and every destructive tool are PATH stubs, and any
-# stubbed destructive call is recorded and fails the test. Locks down the
-# --disk/disko interaction: an explicit --disk against a disko target must be
-# a hard error (a warning that scrolls past is how the wrong disk gets wiped).
+# Argument-safety regression test for cli/offline-install.sh
+# Any stubbed destructive call is recorded and fails the test. 
+# Ensures that the manual --disk partitioning flag cannot be used with a disko
+# configuration and vice-versa.
 set -euo pipefail
 
 script_dir=$(cd "$(dirname "$0")" && pwd)
@@ -20,7 +19,7 @@ destructive_log=$work/destructive.log
 # Root check passes without root.
 printf '#!/usr/bin/env bash\necho 0\n' > "$work/bin/id"
 
-# Answers the two evaluations the installer makes: host resolution and the
+# Checks the two evaluations the installer makes: host resolution and the
 # disko probe. TEST_DISKO_PROBE carries the probe answer (device list or the
 # @no-disko@ sentinel).
 cat > "$work/bin/nix" <<'EOF'
@@ -69,8 +68,8 @@ run_installer() {
   echo ">> [$case_name] PASS"
 }
 
-# 1. THE bug: explicit --disk against a disko target must hard-error, naming
-#    both the requested and the declared devices.
+# 1. Explicit --disk against a disko target must hard-error, naming
+# both the requested and the declared devices.
 TEST_DISKO_PROBE="/dev/testdisk-declared" \
   run_installer disk-vs-disko 1 "" \
   "disk /dev/vda conflicts with this config's disko layout && declares: /dev/testdisk-declared" \
@@ -88,7 +87,7 @@ TEST_DISKO_PROBE="/dev/null" \
 TEST_DISKO_PROBE="@no-disko@" \
   run_installer plain-disk 1 "no" "ERASE all data on /dev/vda"  --disk /dev/vda
 
-# 5. The documented double-override (--no-disko --disk) skips the disko probe
+# 5. The double-override (--no-disko --disk) skips the disko probe
 #    and uses the --disk path.
 TEST_DISKO_PROBE="/dev/testdisk-declared" \
   run_installer no-disko-override 1 "no" "ERASE all data on /dev/vda" --no-disko --disk /dev/vda

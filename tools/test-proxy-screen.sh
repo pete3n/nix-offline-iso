@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Tests for calamares/proxy-screen.py
 # URL validation, the nix.conf rewrite (including the
-# symlink-into-the-store case the live ISO has), the --apply ordering
-# contract, and the Reachability probe against a local HTTP fixture.
+# symlink-into-the-store case the live ISO has), --apply ordering, 
+# and the reachability probe against a local HTTP proxy.
 # The GTK path is exercised in the phase-4 VM matrix instead.
 set -euo pipefail
 

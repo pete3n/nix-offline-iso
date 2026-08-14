@@ -1,82 +1,93 @@
 # nix-offline-iso
 
-NixOS installer ISOs for networks that aren't normal: fully **offline**
-installs that carry every dependency in the ISO's store, and **proxied**
-installs whose only route to the internet is a filtering LAN cache appliance.
-Each comes in a plain-NixOS flavor and a
-[Determinate Nix](https://determinate.systems) flavor.
+This repo provides [NixOS](https://nixos.org) ISO builders for offline and proxied networks.
+The offline installation ISOs save every dependency in the ISO's store, and 
+proxied installs source flake inputs through a reverse-proxy / Nix binary cache 
+server. Each installer variant comes with a NixOS community version and a
+[Determinate Nix](https://determinate.systems) version.
 
-## Products
+## Installers
 
-One repo, one `main`, five installer products
-(`<ecosystem>-<interface>-<contract>` — see [`CONTEXT-MAP.md`](./CONTEXT-MAP.md)):
 
-| Product | Nix | Front end | Network contract |
+| Variant | Nix | Installer Interface | Network |
 |---|---|---|---|
-| `nixos-cli-offline` | upstream | console script | offline — zero network attempts |
-| `nixos-graphical-offline` | upstream | Calamares | offline — zero network attempts |
-| `determinate-cli-offline` | Determinate | console script | offline — zero network attempts |
-| `determinate-cli-proxied` | Determinate | console script | everything via a LAN cache proxy |
-| `nixos-graphical-proxied` | upstream | Calamares | everything via a LAN cache proxy |
+| `nixos-cli-offline` | Nixos.org | CLI + script | Completely offline |
+| `nixos-graphical-offline` | Nixos.org | Gnome + Calamares | Completely offline |
+| `nixos-graphical-proxied` | Nixos.org | Gnome + Calamares | Reverse-proxy |
+| `determinate-cli-offline` | Determinate | CLI + script | Completely offline |
+| `determinate-cli-proxied` | Determinate | CLI + script | Reverse-proxy |
 
-Build an ISO (per-product usage lives in `variants/<product>/README.md`):
+Build an ISO (per-variant usage located in `variants/<variant>/README.md`):
 
 ```
-nix build .#installer-iso-<product>          # e.g. installer-iso-determinate-cli-offline
+nix build .#installer-iso-<variant>          # e.g. installer-iso-determinate-cli-offline
 nix build .#installer-iso-nixos-cli-offline-channels    # channels-target shape (nixos-*-offline only)
 ```
 
-## The two contracts
+To cross-build for aarch64/x86_64 specify the output arch in the build command:
 
-- **Offline** ([glossary](./docs/offline/CONTEXT.md)): the ISO bakes a
-  *target configuration* — its built closure, its derivation closure, and
-  every flake input's source, with the lock repinned to store paths — so the
-  install (and later on-target rebuilds of config edits) make zero network
-  attempts by construction. The offline products embed an example target
-  under `variants/<product>/configs/`; bring your own by replacing it, or
-  build with `--override-input target-<product> path:/your/flake` without
-  touching this tree.
-- **Proxied** ([glossary](./docs/proxied/CONTEXT.md)): the ISO bakes
-  *nothing* and owns no URLs (ADR 0003). The target configuration is cloned
-  from your LAN git host at install time, and every fetch rides a LAN cache
-  appliance (an nginx reverse proxy fronting cache.nixos.org and allow-listed
-  source routes — requirements in
-  [`docs/proxied/appliance-requirements.md`](./docs/proxied/appliance-requirements.md)).
+```
+nix build .#packages.aarch-64-linux.installer-iso-nixos-cli-offline
+```
 
-Why it's built this way: [`docs/adr/`](./docs/adr/README.md). Start with
-[ADR 0008](./docs/adr/0008-single-main-variant-matrix.md) for the repo's
-shape, [ADR 0007](./docs/adr/0007-determinate-nix-offline.md) for
-Determinate-offline, [ADR 0003](./docs/adr/0003-proxied-cli-bakes-nothing.md)
-for the proxied contract.
+
+## Offline vs. Proxy Installers
+
+- **Offline**: the ISO bakes its derivation closure, and every flake input's 
+  source, with the lock repinned to store paths so the install 
+  (and later rebuilds for configuration edits on the installed system) 
+  can be performed on an air-gapped system. The offline variants provide an 
+  example target configuraiton under `variants/<variant>/configs/`; 
+  replace it with your own configuration, or build with
+  `--override-input target-<variant> path:/your/flake` for example:
+
+  ```
+  nix build .#installer-iso-determinate-cli-offline \
+  --override-input target-determinate-cli-offline path:/path/to/your/flake
+  ```
+
+  The target configuration path can be either relative or absolute.
+
+- **Proxied**: the ISO bakes nothing and owns no URLs. The target configuration 
+  is intended to be provided at install time. This method was specifically designed
+  to utilized a [private cache proxy](https://nixos.wiki/wiki/FAQ/Private_Cache_Proxy). 
+  The URL to this proxy can be configured in the installer.
+
+  - **Environment**: The proxied ISOs support reading from a .env file in the
+    project root that can pass env vars to the installer. Currently it only supports
+    setting the default proxy URL with:
+    ```
+    ISO_CACHE_URL=http://nix-cache.url.lan
+    ```
+    and
+    ```
+    ISO_INPUT_OVERRIDES=
+    ```
+
 
 ## Layout
 
 ```
-flake.nix               # one builder flake: five installer-iso-* outputs
-nix/lib.nix             # machinery shared across products (bake logic, modules)
+flake.nix               # provides five installer-iso-* outputs
+nix/lib.nix             # shared build library (bake logic, modules)
 cli/                    # console installers (offline-install, proxied-install, proxy-setup)
-calamares/              # graphical machinery (overlay config files, proxy screen, injects)
-variants/<product>/     # per-product wiring (iso.nix), README, example configs (offline only)
-tools/                  # offline-capable regression harnesses — run before burning an ISO
-docs/                   # ADRs + per-contract glossaries
+calamares/              # calamares mods (overlay config files, proxy screen, injects)
+variants/<variant>/     # per-variant config (iso.nix), README, example configs (offline only)
+tools/                  # test harnesses to validate before building an ISO
 ```
 
 ## Testing
 
-Every harness in `tools/` runs in seconds without building an ISO:
-`test-offline-install-args.sh` (installer arg safety against destructive-tool
-stubs), `test-offline-rebuild.sh <variant-configs>` (the offline-rebuild
-contract), `test-overlay.sh` / `test-proxy-screen.sh` (Calamares proxy
-machinery), `test-proxied-install.sh`. Run the relevant ones before spending
-an ISO+VM cycle.
+Every harness in `tools/` runs quickly without building an ISO:
+`test-offline-install-args.sh` (installer arg safety for disk partitioning), 
+`test-offline-rebuild.sh <variant-configs>` (target config offline rebuild test),
+`test-overlay.sh` / `test-proxy-screen.sh` (proxy URL config test), 
+`test-proxied-install.sh`. 
 
 ## Versioning
 
-`main` tracks the current stable NixOS release; annotated tags (`v26.05`,
-`v26.05.1`, …) mark citable states. Release bumps move the whole product
-matrix at once; maintenance branches for old releases are cut from the last
-tag only on demand. The historical per-product branches (`nixos-26.05-*`)
-are frozen — their content lives on here.
+`main` tracks the current stable NixOS release. Previous versions will be left
+available but unmaintained in version-specific branches (e.g. nixos-26.05).
 
 ## License
 

@@ -1,6 +1,6 @@
 # NixOS Proxied-Install ISO (Determinate Nix, minimal CLI installer)
 
-> Product documentation for `determinate-cli-proxied`, carried over from its pre-flatten
+> Variant documentation for `determinate-cli-proxied`, carried over from its pre-flatten
 > branch. Paths like `configs/flake/` mean this directory's `configs/`;
 > build commands may be stale — the authoritative output name is
 > `nix build .#installer-iso-determinate-cli-proxied` (see the repo README).

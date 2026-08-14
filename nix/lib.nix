@@ -1,8 +1,5 @@
-# Machinery shared across the product matrix (ADR 0008). Everything here
-# came from the pre-flatten branches; where they had diverged, the
-# determinate line's copy won. Per-product wiring lives in
-# variants/<product>/iso.nix — this file holds only what at least two
-# products genuinely share.
+# Shared library for building all ISO variants.
+# Variant specific configs are found in: variants/<variant>/iso.nix
 { nixpkgs }:
 rec {
   systems = [
@@ -16,10 +13,9 @@ rec {
 
   # Force the installer's nix to run offline (no cache.nixos.org probe, no
   # global flake-registry fetch), and enable flakes for the flake install.
-  # nix.registry is forced empty for both ecosystems: Determinate's module
+  # nix.registry is forced empty for both variants: Determinate's module
   # pins a FlakeHub `nixpkgs` registry entry and stock NixOS pins one to the
-  # system nixpkgs — either is a bare-flakeref resolution path the offline
-  # contract must not depend on.
+  # system nixpkgs.
   offlineNixModule =
     { lib, ... }:
     {
@@ -39,12 +35,12 @@ rec {
   # Shared ISO image module. `cfgDir` is copied to /iso/nix-cfg; the
   # installer copies it into /etc/nixos at install time.
   #
-  # `includeSystemBuildDependencies` bakes the *installer system's own*
+  # `includeSystemBuildDependencies` bakes the installer system's own
   # build/derivation closure into the ISO store. Only the graphical channels
   # installer needs it: its target config is merged into the installer
   # system, so the installer's build closure is how the target's build deps
   # get baked. Every flake installer bakes the target's build deps
-  # explicitly (targetToplevel.drvPath) instead — the installer itself is
+  # explicitly (targetToplevel.drvPath) instead. The installer itself is
   # throwaway and never rebuilt, so shipping its build closure would only
   # bloat the ISO.
   mkIsoModule =
@@ -173,16 +169,15 @@ rec {
     );
 
   # The flake-target bake: everything an offline flake install needs in the
-  # ISO store, derived from the target flake INPUT (so a production build
-  # can point it at a private flake with
-  # `--override-input target-<product> path:/your/flake` and this tree is
-  # never edited). Reads the lock from the input's own source — not a
-  # hardcoded repo path — which is what makes the override work.
+  # ISO store, derived from the target flake input (so a production build
+  # can point it at a private flake with:
+  # `--override-input target-<product> path:/your/flake`. This reads the lock 
+	# from the input's own source, not a hardcoded repo path.
   mkFlakeTargetBake =
     {
       system,
       targetFlake,
-      productName,
+      variantName,
     }:
     let
       pkgs = nixpkgs.legacyPackages.${system};
@@ -200,7 +195,7 @@ rec {
           targetConfigs.${builtins.head targetNames}
         else
           throw ''
-            nix-offline-iso (${productName}): the target flake exposes multiple
+            nix-offline-iso (${variantName}): the target flake exposes multiple
             nixosConfigurations (${builtins.concatStringsSep ", " targetNames})
             and none named "nixos". The ISO bakes exactly one config's closure,
             so name your install target "nixos" or expose a single
@@ -228,7 +223,7 @@ rec {
           builtins.fromJSON (builtins.readFile targetLockPath)
         else
           throw ''
-            nix-offline-iso (${productName}): the target flake carries no
+            nix-offline-iso (${variantName}): the target flake carries no
             flake.lock. The flake target must ship a committed, git-tracked
             lock so its inputs can be pinned into the ISO for offline install.
             Generate it with:
@@ -243,7 +238,7 @@ rec {
         _name: node:
         if node ? locked then
           let
-            fetched = builtins.fetchTree (removeAttrs node.locked [ "lastModified" ]);
+            fetched = fetchTree (removeAttrs node.locked [ "lastModified" ]);
           in
           {
             value = node // {
@@ -253,8 +248,7 @@ rec {
                 narHash = fetched.narHash;
               }
               // (if node.locked ? lastModified then { inherit (node.locked) lastModified; } else { })
-              # Carry rev/revCount through the repin (path refs accept
-              # them).
+              # Carry rev/revCount through the repin (path refs accept them).
               // (if node.locked ? rev then { inherit (node.locked) rev; } else { })
               // (if node.locked ? revCount then { inherit (node.locked) revCount; } else { });
             };

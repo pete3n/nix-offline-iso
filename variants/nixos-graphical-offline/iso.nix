@@ -65,7 +65,7 @@ let
 
   bake = shared.mkFlakeTargetBake {
     inherit system targetFlake;
-    productName = "nixos-graphical-offline";
+    variantName = "nixos-graphical-offline";
   };
 
   flakeInstaller = nixpkgs.lib.nixosSystem {

@@ -27,6 +27,8 @@ work=$(mktemp -d "${TMPDIR:-/tmp}/offline-rebuild-probe.XXXXXX")
 store_root="$work/store"
 cfg_dir="$work/cfg"
 keep_logs=0
+
+# shellcheck disable=2329
 cleanup() {
   if [ "$keep_logs" -eq 1 ]; then
     echo ">> Probe workdir kept for inspection: $work"
@@ -64,11 +66,11 @@ run_case() {
   fi
   sed -i "$sed_prog" "$cfg_dir/$rel_file"
   # A sed program that matches nothing edits nothing, and an unchanged config
-  # rebuilds nothing — the case would "pass" while proving nothing. Treat
-  # that as a failure: it means these cases were written for a different
-  # config, and this target needs its own (see offline-rebuild-cases.sh).
+  # rebuilds nothing. Treat that as a failure because it means these cases were 
+	# written for a different config, and this target needs its own 
+	# (see offline-rebuild-cases.sh).
   if cmp -s "$flake_dir/$rel_file" "$cfg_dir/$rel_file"; then
-    echo ">> [$case_name] VACUOUS — sed pattern matched nothing in $rel_file"
+    echo ">> [$case_name] Empty: sed pattern matched nothing in $rel_file"
     echo "   This config needs target-specific cases: ship an"
     echo "   offline-rebuild-cases.sh next to its flake.nix."
     overall=1

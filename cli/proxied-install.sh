@@ -1,9 +1,6 @@
-# proxied-install — CLI NixOS installer for the filtered network
-# (nix-offline-iso). Installs the Flake target the operator cloned to
-# /tmp/nix-cfg, pulling every dependency through the Cache proxy that
-# proxy-setup declared. See CONTEXT.md for the language (Proxied install,
-# Cache URL, Pin match).
-
+# proxied-install: CLI NixOS installer for binary cache proxies. 
+# Installs the Flake target the user cloned to /tmp/nix-cfg, pulling every 
+# dependency through the cache proxy that proxy-setup declared. 
 ROOT=/mnt
 DISK=""
 HOST=""
@@ -79,23 +76,22 @@ if [ -z "$CACHE_URL" ]; then
 fi
 
 # Every nix this script spawns must (a) have the flakes features on and
-# (b) substitute through the Cache proxy. The script's own `nix` is
-# Determinate's client (system path — runtimeInputs deliberately carries no
+# (b) substitute through the cache proxy. The script's own `nix` is
+# Determinate's client (system path, runtimeInputs deliberately carries no
 # pkgs.nix), but nixos-install bundles an upstream nix internally, and
 # upstream clients do not reliably read the Determinate-generated config
-# (see the parent branch's ADR for the history). Env-level config covers
-# every client uniformly. Appended (not overwritten) so any inherited
-# NIX_CONFIG survives.
+# Env-level config covers every client uniformly. Appended (not overwritten) 
+# so any inherited NIX_CONFIG survives.
 export NIX_CONFIG="${NIX_CONFIG:-}
 extra-experimental-features = nix-command flakes
 substituters = $CACHE_URL"
 
-# Locate the Flake target: the working copy the operator cloned (and maybe
-# edited) per the MOTD flow. There is no baked fallback on this branch.
+# Locate the flake target: the working copy the user cloned (or edited) 
+# per the MOTD flow.
 src="${CFG:-/tmp/nix-cfg}"
 if [ ! -e "$src/flake.nix" ]; then
   echo "No flake.nix in $src." >&2
-  echo "Clone your Config repo first:  git clone <your-repo-url> $src" >&2
+  echo "Clone your config repo first:  git clone <your-repo-url> $src" >&2
   echo "(This branch installs Flake targets only: a plain configuration.nix" >&2
   echo "cannot declare the proxied substituter and input URLs it needs.)" >&2
   exit 1
