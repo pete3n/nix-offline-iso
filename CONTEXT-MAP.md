@@ -31,6 +31,20 @@ baked) or Proxied install (egress only via the Cache proxy + LAN; bakes
 nothing). These are opposing doctrines, not variations — each keeps its own
 glossary and their terms deliberately conflict.
 
+**Builder prefill**:
+A value the ISO builder supplies at build time that changes only what an
+installer prefills or displays — never anything that bypasses an operator
+confirmation or probe, and never the Target except as the operator's
+probed, confirmed choice. The repo's tracked defaults are the fallback
+when the builder supplies nothing; the repo itself stays fleet-generic
+either way. Builder-supplied *routes* (rerouting where an input is fetched
+from) sit under the same rule only while the fetched content stays pinned
+to what the lock records — an unpinned reroute changes which bytes, not
+just where from, and is outside this term.
+_Avoid_: build option/build setting (too broad — most build settings are
+not prefills and do not get this exemption), baked config (the offline
+contract's word for a different thing).
+
 ## Contexts
 
 - [Offline contract](./docs/offline/CONTEXT.md) — zero-network installs;

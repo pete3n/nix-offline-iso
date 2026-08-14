@@ -11,8 +11,57 @@ rec {
   ];
   forAllSystems = nixpkgs.lib.genAttrs systems;
 
+  # Builder prefills (ADR 0009): the single point where builder-supplied
+  # environment reaches evaluation. Under pure eval getEnv returns "", so a
+  # plain `nix build` sees every prefill as null and each consumer keeps its
+  # tracked default; tools/build-iso.sh sources .env and builds with
+  # --impure to make these visible. Only names read here can influence a
+  # build — grep for builderPrefills to find every consumer.
+  builderPrefills =
+    let
+      readPrefill =
+        name:
+        let
+          value = builtins.getEnv name;
+        in
+        if value == "" then null else value;
+
+      rawCacheUrl = readPrefill "ISO_CACHE_URL";
+    in
+    {
+      # The same shape check proxy-setup applies before interpolating the
+      # URL into nix.conf syntax. A bad value should kill the build here,
+      # not surface as a broken prompt on a burned stick.
+      cacheUrl =
+        if rawCacheUrl != null && builtins.match "https?://[A-Za-z0-9.:/_-]+" rawCacheUrl == null then
+          throw ''
+            nix-offline-iso: ISO_CACHE_URL is not a usable Cache URL: ${rawCacheUrl}
+            Expected http(s)://host[:port][/path] with no spaces or quotes.
+          ''
+        else
+          rawCacheUrl;
+    };
+
   baseCliInstaller = "${nixpkgs}/nixos/modules/installer/cd-dvd/installation-cd-minimal.nix";
   baseGraphicalInstaller = "${nixpkgs}/nixos/modules/installer/cd-dvd/installation-cd-graphical-calamares-gnome.nix";
+
+  # Silence Determinate's telemetry/crash reporting (Sentry, IDS) in the
+  # live installer, shared by both determinate products: the offline
+  # contract's bar is zero network ATTEMPTS (ADR 0007's residual, closed by
+  # this knob), and on the proxied contract the reporting endpoints are
+  # unreachable by construction — best case noise, worst case a hang in
+  # the crash path. Repo policy, deliberately NOT a Builder prefill (ADR
+  # 0009): its correct value is the same for every builder. Both settings
+  # are needed: environment.variables covers login shells and the nix
+  # client; determinate-nixd runs as nix-daemon.service, which reads no
+  # shell profile. Runtime-only — as of Determinate 3.18 sentry-native is
+  # linked into the closure regardless (a substitution concern, tracked in
+  # docs/proxied/appliance-requirements.md). Installer-only either way:
+  # Targets declare their own (installed == evaluated == committed).
+  determinateTelemetryOff = {
+    environment.variables.DETSYS_IDS_TELEMETRY = "disabled";
+    systemd.services.nix-daemon.environment.DETSYS_IDS_TELEMETRY = "disabled";
+  };
 
   # Force the installer's nix to run offline (no cache.nixos.org probe, no
   # global flake-registry fetch), and enable flakes for the flake install.

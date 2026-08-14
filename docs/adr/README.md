@@ -16,6 +16,8 @@ decision dates, so the sequence is not chronological.
 | 0006 | *(reserved — fleet-internal, recorded in the fleet's private repo)* | — | 2026-08-11 |
 | [0007](./0007-determinate-nix-offline.md) | Determinate Nix, offline | `determinate-cli-offline` | 2026-08-01 |
 | [0008](./0008-single-main-variant-matrix.md) | One public `main`: the variant matrix becomes directories | repo-wide | 2026-08-12 |
+| [0009](./0009-builder-env-prefills-and-route-overrides.md) | Builder env: `.env` prefills and input-route overrides | repo-wide | 2026-08-13 |
+| [0010](./0010-flake-ref-install.md) | Flake-ref install: build the Target straight from the bare Config repo | `determinate-cli-proxied` | 2026-08-13 |
 
 Former numbers: **0007 was "ADR 0001" on the old `nixos-26.05-cli-determinate`
 branch** — it collided with 0001-offline-rebuild-deps (the stock lineage's

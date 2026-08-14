@@ -39,16 +39,20 @@ The LAN-hosted git repository holding the user's flake configuration —
 typically a bare repository reached over SSH with authorized-key login only.
 Deliberately *not* hosted on the Cache proxy: the appliance is
 internet-facing, and a config inventory does not belong on the box with the
-largest attack surface. The Installer clones it at install time using the
-Provisioning key; the working copy — possibly edited on the spot — is what
-gets installed, and the installed system keeps it as its git origin.
+largest attack surface. The Installer consumes it one of two ways: cloned at
+install time using the Provisioning key (the working copy — possibly edited
+on the spot — is what gets installed, and the installed system keeps it as
+its git origin), or as a Flake-ref install (the committed rev is what gets
+installed; nothing is cloned anywhere).
 _Avoid_: baked config (nothing is baked on this contract), upstream (it is
 the user's own repository), USB config (a `--config` escape hatch for
 machine-zero, never the primary path).
 
 **Provisioning key** _(cli)_:
-The passphrase-protected SSH private key that authenticates the Installer's
-clone of the Config repo. It travels on the installing admin's own USB stick
+The passphrase-protected SSH private key (with its CA-signed certificate,
+where the fleet issues one) that authenticates the Installer's fetch of the
+Config repo — clone and Flake-ref install alike. It travels on the
+installing admin's own USB stick
 — never in the ISO: a credential baked into a mass-copied artifact would
 break the bakes-nothing contract (ADR 0003) and be only as private as the
 least-controlled stick in the building. Its public half is authorized on the
@@ -73,6 +77,19 @@ The check that a Proxied install can proceed: fetch
 stock installer's startup internet requirement, which runs before any screen
 could collect the Cache URL.
 _Avoid_: internet check (it checks the Cache proxy, not the internet).
+
+**Flake-ref install** _(cli)_:
+A Proxied install performed straight from a flake reference to the Config
+repo (`git+ssh://…`): no working copy exists anywhere — the Installer
+builds the committed rev it fetches over LAN git, and the Target keeps no
+`/etc/nixos` checkout; its rebuilds address the Config repo by ref through
+whatever access its own configuration declares. Engaged only by an explicit
+flag, never by default. Requires the Config repo to already commit the
+host's hardware description (a hardware configuration or disko layout) —
+there is no generate-and-merge step in this mode.
+_Avoid_: direct install (the graphical product's no-proxy escape hatch — a
+near-opposite meaning), remote install (nothing is remote; the repo is on
+the LAN).
 
 **Direct install** _(graphical)_:
 An install performed without the Cache proxy — the Proxy screen's escape

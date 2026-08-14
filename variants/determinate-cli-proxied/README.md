@@ -42,6 +42,49 @@ nix build .#iso.x86_64-linux
   nix.settings.substituters = [ "http://nix-proxy.lan" ];
   ```
 
+- **Declare the telemetry opt-out in your Config repo too.** The installer's
+  own environment already sets it (the Sentry/IDS endpoints are unreachable
+  on the filtered network — disabling stops the attempts), but nothing is
+  ever injected into the Target (installed == evaluated == committed, ADR
+  0003), so the installed system needs it from its own config:
+
+  ```nix
+  environment.variables.DETSYS_IDS_TELEMETRY = "disabled";
+  systemd.services.nix-daemon.environment.DETSYS_IDS_TELEMETRY = "disabled";
+  ```
+
+### Flake-ref install (no clone)
+
+Steps 5–6 can be skipped entirely: hand the installer a flake reference to
+your Config repo and it builds the **committed rev** straight from LAN git —
+nothing is cloned, edited, or copied anywhere:
+
+```
+sudo proxied-install --flake 'git+ssh://git.lan/srv/git/nix.git' --host <name>
+```
+
+What this mode requires and implies (see
+[`docs/proxied/CONTEXT.md`](../../docs/proxied/CONTEXT.md): Flake-ref
+install, and ADR 0010):
+
+- **The ref must already commit this host's hardware truth** — a
+  `hardware-configuration.nix` or a disko layout. There is no
+  `nixos-generate-config`-and-merge in this mode; a host the repo doesn't
+  know yet is what the clone-and-edit flow (steps 5–6) is for.
+- **SSH access**: nix's git fetcher ignores `GIT_SSH_COMMAND`, so the key
+  must come from root's `~/.ssh/config` on the live installer:
+
+  ```
+  Host git.lan
+    User git
+    IdentityFile /root/.ssh/provision
+  ```
+
+- **The installed system keeps no `/etc/nixos` checkout.** It rebuilds by
+  ref (`nixos-rebuild switch --flake 'git+ssh://…#<name>'`), with repo
+  access coming from whatever its own configuration declares — nothing is
+  carried over from the installer.
+
 ## How it works
 
 `proxy-setup` (`cli/proxy-setup.sh`): validates the URL shape, probes
@@ -58,15 +101,20 @@ nix build .#iso.x86_64-linux
    script's own `nix` is Determinate's client (it ships no upstream nix of
    its own), but `nixos-install` bundles an upstream client internally, and
    the env covers it too.
-3. Requires `flake.nix` in the config dir.
+3. Requires `flake.nix` in the config dir — or, with `--flake REF`, fetches
+   the ref's metadata instead (failing early with the SSH-key hint if the
+   repo is unreachable).
 4. **Pin match**: compares the config lock's `determinate` narHash against
    `/etc/determinate-pin`; a mismatch warns (from-source build) and asks for
-   YES. Skipped with a note when there is no lock to read.
+   YES. Skipped with a note when there is no lock to read. With `--flake`
+   the lock comes from `nix flake metadata` on the ref.
 5. One full evaluation answers two pre-flight questions: disko layout
    (disko then owns partitioning) and declared substituters (warning above).
 6. Partitions (disko / `--disk` / you), runs `nixos-generate-config` for
    non-disko targets (preserving the generated `hardware-configuration.nix`,
-   with the ESP-umask fix), copies the config to `/etc/nixos`.
+   with the ESP-umask fix), copies the config to `/etc/nixos`. With
+   `--flake`, none of that: no generation, no copy — the Target keeps no
+   `/etc/nixos`.
 7. Builds `…#nixosConfigurations.<host>…toplevel` **in the live store** —
    whose substituters point at the proxy — and installs the finished path
    with `nixos-install --system … --no-channel-copy` (a flake-managed

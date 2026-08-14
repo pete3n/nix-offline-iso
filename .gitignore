@@ -2,6 +2,10 @@ result
 result/
 result-*
 
+# The builder's own prefills and input routes (ADR 0009) — never committed.
+# The tracked defaults live in the code; .env.example documents the keys.
+.env
+
 # Tripwire, not a hiding place (ADR 0008): fleet-internal notes may sit in
 # the working tree while developing, but their system of record is the
 # fleet's PRIVATE repo — nothing fleet-shaped may ever be committed here.

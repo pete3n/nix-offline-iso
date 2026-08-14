@@ -49,6 +49,16 @@ own telemetry/status probes, so that part of "hard-neuter" is unverified — see
 below. Re-check the neutering surface whenever the pinned Determinate version
 changes.
 
+> **Amended 2026-08-13:** the knob exists. Determinate documents the
+> `DETSYS_IDS_TELEMETRY=disabled` environment variable as the opt-out for
+> its telemetry and (as of 3.18) Sentry crash reporting; both determinate
+> installers now bake it via `shared.determinateTelemetryOff` (env-level
+> *and* on `nix-daemon.service`, which reads no shell profile). Two limits:
+> it is **runtime-only** — Determinate ≥ 3.18 links `sentry-native` into
+> the closure regardless, which is a substitution concern (proxied contract:
+> `docs/proxied/appliance-requirements.md`), not a network-attempts one —
+> and the wider re-check-on-bump guidance above still stands.
+
 ## Verification notes (install-time findings)
 
 A first end-to-end install surfaced three issues, all rooted in the same fact:

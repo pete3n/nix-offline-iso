@@ -11,8 +11,15 @@
   system,
 }:
 let
-  # Prefilled into the Proxy screen's Cache URL field.
-  cacheUrlDefault = "http://nix-proxy.lan";
+  # Prefilled into the Proxy screen's Cache URL field. A Builder prefill
+  # (ADR 0009) replaces the tracked default when the ISO is built through
+  # tools/build-iso.sh with ISO_CACHE_URL set — the prefill only; the
+  # screen's Reachability probe still gates.
+  cacheUrlDefault =
+    if shared.builderPrefills.cacheUrl != null then
+      shared.builderPrefills.cacheUrl
+    else
+      "http://nix-proxy.lan";
 
   calamaresOverlay = final: prev: {
     proxy-screen =
@@ -113,7 +120,7 @@ let
       zfsWarningFix
       shared.baseGraphicalInstaller
       (
-        { pkgs, ... }:
+        { pkgs, lib, ... }:
         {
           # Terminal access to the Proxy screen for debugging; the
           # wrapped desktop entry is the normal path.
@@ -123,6 +130,16 @@ let
             "nix-command"
             "flakes"
           ];
+
+          # Builder prefill provenance (ADR 0009). The Proxy screen gets
+          # its prefill substituted at build time — nothing reads this
+          # file here; it exists so `cat /etc/installer-prefills` answers
+          # "which fleet flavor is this stick?" on every proxied product.
+          environment.etc."installer-prefills" = lib.mkIf (shared.builderPrefills.cacheUrl != null) {
+            text = ''
+              ISO_CACHE_URL=${shared.builderPrefills.cacheUrl}
+            '';
+          };
         }
       )
     ];

@@ -26,6 +26,12 @@ nix build .#installer-iso-<product>          # e.g. installer-iso-determinate-cl
 nix build .#installer-iso-nixos-cli-offline-channels    # channels-target shape (nixos-*-offline only)
 ```
 
+To bake your own defaults (the proxied products' Cache URL prefill) or
+reroute input fetches for builds behind a cache proxy, copy `.env.example`
+to `.env` and build through `tools/build-iso.sh <product>` instead — see
+[ADR 0009](./docs/adr/0009-builder-env-prefills-and-route-overrides.md).
+A plain `nix build` ignores `.env` and builds the tracked defaults.
+
 ## The two contracts
 
 - **Offline** ([glossary](./docs/offline/CONTEXT.md)): the ISO bakes a

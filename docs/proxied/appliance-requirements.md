@@ -80,6 +80,23 @@ Top-level Config-repo inputs are FlakeHub *range* URLs, path-routed:
   harmless only if LAN DNS returns NXDOMAIN for external names (fail-fast,
   not blackhole) — verify.
 
+## Noted 2026-08-13: Determinate ≥ 3.18 links sentry-native (crash telemetry)
+
+As of Determinate Nix 3.18, `getsentry/sentry-native` joins the closure of
+Determinate's `nix` (crash reporting). Consequence for the appliance: the
+**full** closure — sentry-native's store paths included — must substitute
+through the `/install-determinate/` mirror route (or arrive via Pin match
+from the live installer's store). A client that cannot substitute those
+paths falls back to *building* sentry-native, and its fixed-output source
+fetch (`github.com/getsentry/…`) is exactly the class of URL the appliance
+blocks — and no `/github/` allowlist entry can help, because the URL sits
+inside a derivation, not a flake input the client could re-route.
+
+Two misreads to avoid: `DETSYS_IDS_TELEMETRY=disabled` (baked into the
+determinate installers as repo policy) is a **runtime** opt-out and changes
+nothing about this closure; and the failure mode surfaces on *builds behind
+the appliance* (ISO builds, rebuilds at a bumped pin), not only on installs.
+
 The section below remains authoritative for the **transitive Determinate
 tree** (explicit-rev codeload pins; ADR 0004).
 
@@ -154,3 +171,7 @@ which builds `nix` from the `nix-src` flake.)
   `install.determinate.systems/determinate-nixd/...` (302-to-CDN vs direct).
 - GET/HEAD-only policy is sufficient for all of the above (expected: yes —
   every fetch here is a plain download).
+- One end-to-end build at a ≥ 3.18 determinate pin that *substitutes*
+  sentry-native through `/install-determinate/` (route-level checks —
+  `/nix-cache-info`, signed narinfos — do not prove the closure is
+  complete; a from-source fallback on sentry-native means it is not).
