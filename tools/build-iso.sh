@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# build-iso — build an installer ISO, applying the builder's .env (ADR 0009).
+# build-iso: build an installer ISO, applying .env variables.
 #
-# Usage: tools/build-iso.sh <product> [extra `nix build` args...]
+# Usage: tools/build-iso.sh <variant> [extra `nix build` args...]
 #
-# With no .env at the repo root this is exactly
-# `nix build .#installer-iso-<product>`: pure evaluation, tracked defaults.
-# With a .env it reads the file IN A CLEAN ENVIRONMENT — only .env content,
-# never the ambient shell, can influence the build — validates the values
-# it knows, and builds with --impure so nix/lib.nix's builderPrefills
+# With no .env at the repo root, this is the same as running:
+# `nix build .#installer-iso-<variant>`: pure evaluation, with defaults.
+#
+# With a .env it reads the file IN A CLEAN ENVIRONMENT, validates known values,
+# and build with with the --impure switch, so that nix/lib.nix's builderPrefills
 # allow-list can read them:
 #
-#   ISO_CACHE_URL       Builder prefill for the proxied products' Cache URL.
+#   ISO_CACHE_URL       Builder prefill for the proxied variants' cache URL.
 #   ISO_INPUT_OVERRIDES Space-separated input=url pairs, each handed to
 #                       --override-input. NOTE: an override REPLACES the
 #                       input's lock entry — append ?narHash=<the lock's
@@ -26,9 +26,9 @@ repo="$(dirname "$here")"
 
 usage() {
   cat <<EOF
-Usage: tools/build-iso.sh <product> [extra \`nix build\` args...]
+Usage: tools/build-iso.sh <variant> [extra \`nix build\` args...]
 
-Products (installer-iso-<product> in flake.nix):
+Products (installer-iso-<variant> in flake.nix):
   nixos-cli-offline              nixos-cli-offline-channels
   nixos-graphical-offline        nixos-graphical-offline-channels
   determinate-cli-offline
@@ -51,18 +51,19 @@ case "$1" in
     ;;
 esac
 
-product="$1"
+variant="$1"
 shift
 # Accept either the short product name or the full attribute name.
-attr="installer-iso-${product#installer-iso-}"
+attr="installer-iso-${variant#installer-iso-}"
 
 nix_args=()
 
 if [ -r "$repo/.env" ]; then
   # Read .env in a scrubbed environment so a stray ISO_* exported in the
   # builder's shell can never masquerade as (or leak alongside) the file's
-  # values. .env must therefore be static KEY=VALUE lines — it cannot
-  # reference ambient variables. The two known keys come back one per line.
+  # values. .env must be static KEY=VALUE lines. It cannot reference shell 
+	# variables. The two known keys come back one per line.
+	# shellcheck disable=2016
   mapfile -t env_values < <(env -i PATH="$PATH" bash -c '
     set -a
     . "$1"
@@ -72,9 +73,8 @@ if [ -r "$repo/.env" ]; then
   iso_cache_url="${env_values[0]:-}"
   iso_input_overrides="${env_values[1]:-}"
 
-  # Export exactly what .env declared — and nothing else — for nix's
-  # --impure getEnv. An unset key is unset for the build too, even if the
-  # ambient shell exported it.
+  # Export exactly what .env declared for nix's --impure getEnv. An unset key 
+	# is unset for the build too, even if the ambient shell exported it.
   if [ -n "$iso_cache_url" ]; then
     export ISO_CACHE_URL="$iso_cache_url"
   else
@@ -82,8 +82,8 @@ if [ -r "$repo/.env" ]; then
   fi
   unset ISO_INPUT_OVERRIDES
 
-  # The same shape check proxy-setup and builderPrefills apply. Failing
-  # here beats failing minutes into an evaluation.
+  # The same shape check proxy-setup and builderPrefills apply. 
+	# Fail early for invalid values.
   if [ -n "$iso_cache_url" ]; then
     if ! printf '%s' "$iso_cache_url" | grep -Eq '^https?://[A-Za-z0-9.:/_-]+$'; then
       echo "build-iso: ISO_CACHE_URL is not a usable Cache URL: $iso_cache_url" >&2
@@ -106,7 +106,7 @@ if [ -r "$repo/.env" ]; then
         echo ">> .env: override input '$input_name' -> $input_url (content-pinned)"
       else
         echo ">> .env: override input '$input_name' -> $input_url"
-        echo "   WARNING: no ?narHash= on this URL — the override REPLACES the"
+        echo "   WARNING: no ?narHash= on this URL, the override REPLACES the"
         echo "   lock entry, so the build takes whatever this route serves."
         echo "   Append ?narHash=<the lock's hash> to pin it (see .env.example)."
       fi

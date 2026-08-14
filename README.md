@@ -11,33 +11,37 @@ server. Each installer variant comes with a NixOS community version and a
 
 | Variant | Nix | Installer Interface | Network |
 |---|---|---|---|
-| `nixos-cli-offline` | Nixos.org | CLI + script | Completely offline |
-| `nixos-graphical-offline` | Nixos.org | Gnome + Calamares | Completely offline |
-| `nixos-graphical-proxied` | Nixos.org | Gnome + Calamares | Reverse-proxy |
-| `determinate-cli-offline` | Determinate | CLI + script | Completely offline |
-| `determinate-cli-proxied` | Determinate | CLI + script | Reverse-proxy |
+| nixos-cli-offline | Nixos.org | CLI + script | Completely offline |
+| nixos-graphical-offline | Nixos.org | Gnome + Calamares | Completely offline |
+| nixos-graphical-proxied | Nixos.org | Gnome + Calamares | Reverse-proxy |
+| determinate-cli-offline | Determinate | CLI + script | Completely offline |
+| determinate-cli-proxied | Determinate | CLI + script | Reverse-proxy |
 
-Build an ISO (per-variant usage located in `variants/<variant>/README.md`):
+
+## Usage
+Either run the provide builder script from `./tools/build-iso.sh` or use nix build
+directly to build an ISO: 
 
 ```
 nix build .#installer-iso-<variant>          # e.g. installer-iso-determinate-cli-offline
 nix build .#installer-iso-nixos-cli-offline-channels    # channels-target shape (nixos-*-offline only)
 ```
 
+
+Per-variant usage is located in `variants/<variant>/README.md`.
 To cross-build for aarch64/x86_64 specify the output arch in the build command:
 
 ```
 nix build .#packages.aarch-64-linux.installer-iso-nixos-cli-offline
 ```
 
-
 ## Offline vs. Proxy Installers
 
-- **Offline**: the ISO bakes its derivation closure, and every flake input's 
-  source, with the lock repinned to store paths so the install 
+- **Offline**: the offline installer ISOs bake their derivation closure, and every 
+  flake input's source, with the lock repinned to store paths so the install 
   (and later rebuilds for configuration edits on the installed system) 
   can be performed on an air-gapped system. The offline variants provide an 
-  example target configuraiton under `variants/<variant>/configs/`; 
+  example target configuration under `variants/<variant>/configs/`; 
   replace it with your own configuration, or build with
   `--override-input target-<variant> path:/your/flake` for example:
 
@@ -54,17 +58,20 @@ nix build .#packages.aarch-64-linux.installer-iso-nixos-cli-offline
   The URL to this proxy can be configured in the installer.
 
   - **Environment**: The proxied ISOs support reading from a .env file in the
-    project root that can pass env vars to the installer. Currently it only supports
-    setting the default proxy URL with:
+    project root that can pass env vars to the installer. This file currently
+    supports setting the default proxy URL with:
     ```
     ISO_CACHE_URL=http://nix-cache.url.lan
     ```
-    and
+    and re-pinning inputs in the target flake with the proxy URL:
     ```
-    ISO_INPUT_OVERRIDES=
+    ISO_INPUT_OVERRIDES="determinate=tarball+http://my-nix-cache.lan/flakehub/f/DeterminateSystems/determinate/3.21.9.tar.gz?narHash=sha256-IrqJV%2B9NcFevwyBBqEkxkbqhX3rtJI7sSzHz5wDVaLo%3D"
     ```
 
-    A plain `nix build` ignores `.env` and builds the tracked defaults.
+    The .env file is automatically ingested by the `./tools/build-iso.sh` script
+    and passes them to the ISO build process by building with the --impure flag.
+
+    A plain `nix build` ignores `.env` and builds with default values.
 
 ## Layout
 
