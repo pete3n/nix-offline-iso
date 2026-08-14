@@ -117,6 +117,9 @@ if [ -n "$FLAKE_REF" ]; then
   echo "   (or a disko layout) must already be committed, but nothing is"
   echo "   generated or merged, and the target keeps no /etc/nixos"
   echo "   checkout: it rebuilds by ref."
+  echo "   A committed flake.lock is strongly recommended here: a lockless"
+  echo "   ref resolves its inputs NOW and records the result nowhere (no"
+  echo "   working copy exists to keep a written lock)."
 else
 	# Locate the flake target: the working copy the user cloned (or edited) 
 	# per the MOTD flow.
@@ -142,6 +145,16 @@ fi
 # fetch through the cache proxy, and an unreachable input URL is a proxy 
 # allow-list concern that creates a fetch error. This isn't an installer
 # concern, so the check is skipped.
+# A remote ref is read-only for nix: it cannot write back a freshly
+# resolved lock, and without this flag a lockless ref dies with "cannot
+# write modified lock file" instead of installing. The clone flow keeps the
+# write on purpose — the installed /etc/nixos keeps the written lock so it
+# can be committed back to the Config repo.
+lock_flags=()
+if [ -n "$FLAKE_REF" ]; then
+  lock_flags+=(--no-write-lock-file)
+fi
+
 iso_pin=""
 if [ -r "$PIN_FILE" ]; then
   iso_pin="$(grep '^narHash: ' "$PIN_FILE" | head -n 1 | cut -d' ' -f2)"
@@ -154,7 +167,7 @@ if [ -n "$FLAKE_REF" ]; then
 	# and early with the key hint. A lockless repo resolves its inputs through the 
 	# cache proxy, the same install-time locking the clone method uses.
   meta_json="$(mktemp)"
-  if ! nix flake metadata --json "$src" > "$meta_json" 2> "$meta_json.err"; then
+  if ! nix flake metadata "${lock_flags[@]}" --json "$src" > "$meta_json" 2> "$meta_json.err"; then
     echo "Could not fetch the flake at $src:" >&2
     sed 's/^/  /' "$meta_json.err" >&2 || true
     echo "For git+ssh refs, nix's git fetcher ignores GIT_SSH_COMMAND: the" >&2
@@ -231,7 +244,7 @@ fi
 if [ -z "$HOST" ]; then
   echo ">> Resolving the install target from the flake (first use fetches"
   echo "   the flake's inputs through the Cache proxy)..."
-  HOST="$(nix eval --raw "$src#nixosConfigurations" --apply '
+  HOST="$(nix eval --raw "${lock_flags[@]}" "$src#nixosConfigurations" --apply '
     cfgs:
     let names = builtins.attrNames cfgs; in
     if cfgs ? nixos then "nixos"
@@ -252,7 +265,7 @@ subs_warned=0
 echo ">> Evaluating nixosConfigurations.$HOST (full config evaluation, this"
 echo "   can take minutes, and the first run fetches inputs through the"
 echo "   cache proxy; no output is normal)..."
-eval_json="$(nix eval --json \
+eval_json="$(nix eval --json "${lock_flags[@]}" \
   "$src#nixosConfigurations.\"$HOST\".config" \
   --apply 'cfg: {
     disko = cfg.system.build ? diskoScript;
@@ -332,7 +345,7 @@ if [ "$is_disko" -eq 1 ]; then
   echo ">> Resolving the disko script (re-evaluates the config, and may fetch"
   echo "   or build through the cache proxy; takes a few minutes, then"
   echo "   partitioning starts)..."
-  disko_script="$(nix build --no-link --print-out-paths \
+  disko_script="$(nix build --no-link --print-out-paths --print-build-logs "${lock_flags[@]}" \
     "$src#nixosConfigurations.\"$HOST\".config.system.build.diskoScript")"
   "$disko_script"
   # disko mounts at its declared rootMountPoint (default /mnt).
@@ -428,7 +441,7 @@ fi
 # proxy-setup's reroute and this script's NIX_CONFIG); `--system` then just
 # copies the closure onto the target.
 echo ">> Building nixosConfigurations.$HOST through the cache proxy"
-top="$(nix build --no-link --print-out-paths \
+top="$(nix build --no-link --print-out-paths --print-build-logs "${lock_flags[@]}" \
   "$build_src#nixosConfigurations.\"$HOST\".config.system.build.toplevel")"
 
 # --no-channel-copy: a flake-managed system has no use for a root channel,
