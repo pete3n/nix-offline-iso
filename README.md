@@ -64,6 +64,7 @@ nix build .#packages.aarch-64-linux.installer-iso-nixos-cli-offline
     ISO_INPUT_OVERRIDES=
     ```
 
+    A plain `nix build` ignores `.env` and builds the tracked defaults.
 
 ## Layout
 

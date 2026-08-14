@@ -118,6 +118,17 @@ let
       networking.wireless.enable = lib.mkForce false;
       networking.networkmanager.enable = true;
 
+      # Builder prefill (ADR 0009): an ISO built through tools/build-iso.sh
+      # may carry the builder's own Cache URL; proxy-setup reads this file
+      # for its prompt prefill — and only the prefill, the Reachability
+      # probe still gates. Absent on a default build. `cat` it on a live
+      # ISO to see exactly what was baked.
+      environment.etc."installer-prefills" = lib.mkIf (shared.builderPrefills.cacheUrl != null) {
+        text = ''
+          ISO_CACHE_URL=${shared.builderPrefills.cacheUrl}
+        '';
+      };
+
       # Shown at the console login of the live installer.
       users.motd = lib.mkForce ''
 	NixOS proxied installer (Determinate Nix)
@@ -139,6 +150,11 @@ let
 	5. Install:  sudo proxied-install
 		- auto-partition + install:  sudo proxied-install --disk /dev/sdX
 		- pick a config by name:  sudo proxied-install --host <name>
+		- Flake-ref install (skips steps 2-3; installs a committed rev,
+		 hardware config or disko layout must be committed for this host):
+		 sudo proxied-install --flake 'git+ssh://<host>/<repo>.git'
+		 For SSH refs put the key in root's ~/.ssh/config (a Host entry
+		 with IdentityFile); nix ignores GIT_SSH_COMMAND.
 
 	This ISO's Determinate pin is at /etc/determinate-pin — your config's
 	flake.lock should pin the same narHash, or the install compiles Nix
@@ -187,6 +203,9 @@ let
       # Determinate Nix in the live installer: replaces nix-daemon with
       # determinate-nixd so install-time builds run through Determinate.
       determinate.nixosModules.default
+      # The Sentry/IDS endpoints are unreachable on the filtered network;
+      # disable the attempts (runtime policy — see the module's comment).
+      shared.determinateTelemetryOff
       installerModule
       shared.baseCliInstaller
       isoImageModule

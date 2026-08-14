@@ -22,6 +22,9 @@ let
       # offlineNixModule comes after so its mkForce offline settings win.
       determinate.nixosModules.default
       shared.offlineNixModule
+      # Zero network ATTEMPTS: silence Determinate's telemetry/crash
+      # reporting too — the knob ADR 0007's residual was missing (amended).
+      shared.determinateTelemetryOff
       (shared.mkOfflineCliInstallerModule {
         # fh (the FlakeHub CLI) ships only on the determinate flavor.
         extraPackages = pkgs: [ pkgs.fh ];

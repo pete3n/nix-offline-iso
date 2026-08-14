@@ -16,6 +16,19 @@ CUSTOM_CONF="${TEST_PREFIX:+$TEST_PREFIX/nix.custom.conf}"
 CUSTOM_CONF="${CUSTOM_CONF:-/etc/nix/nix.custom.conf}"
 URL_FILE="${TEST_PREFIX:+$TEST_PREFIX/nix-cache-url}"
 URL_FILE="${URL_FILE:-/run/nix-cache-url}"
+PREFILLS_FILE="${TEST_PREFIX:+$TEST_PREFIX/installer-prefills}"
+PREFILLS_FILE="${PREFILLS_FILE:-/etc/installer-prefills}"
+
+# Builder prefill (ADR 0009): an ISO built through tools/build-iso.sh may
+# bake the builder's own Cache URL; it replaces the prompt's prefill — and
+# only the prefill, the probe below still gates. Parsed, not sourced: the
+# file is data, and a strict read keeps a garbled line from becoming code.
+if [ -r "$PREFILLS_FILE" ]; then
+  prefill_url="$(grep '^ISO_CACHE_URL=' "$PREFILLS_FILE" | head -n 1 | cut -d= -f2- || true)"
+  if [ -n "$prefill_url" ]; then
+    DEFAULT_URL="$prefill_url"
+  fi
+fi
 
 usage() {
   cat <<EOF
@@ -44,6 +57,13 @@ fi
 if [ -z "$url" ]; then
   # -e/-i: an editable prefill, so the common case is pressing Enter.
   read -r -e -i "$DEFAULT_URL" -p "Cache URL: " url
+  # A non-interactive stdin gets no readline prefill; treat an empty
+  # answer as accepting the prefill there — and only there. At a real
+  # terminal an empty answer means the operator deliberately cleared the
+  # prefill, which the shape check below refuses as before.
+  if [ -z "$url" ] && [ ! -t 0 ]; then
+    url="$DEFAULT_URL"
+  fi
 fi
 
 # Normalize away trailing slashes; nix joins request paths itself.
@@ -111,7 +131,10 @@ echo ">> The live environment now substitutes only from the Cache proxy."
 
 # Soft self-check through nix itself (headers, redirects, compression —
 # things curl alone does not prove). Informational: the probe above already
-# gated the install.
+# gated the install. DETSYS_IDS_TELEMETRY: sudo's env_reset strips the
+# ISO's login-env copy of the telemetry opt-out; re-export it for the
+# Determinate client this check drives (see nix/lib.nix).
+export DETSYS_IDS_TELEMETRY=disabled
 if [ -z "$TEST_PREFIX" ] && command -v nix > /dev/null 2>&1; then
   if nix store info --store "$url" > /dev/null 2>&1; then
     echo ">> nix reaches the Cache proxy as a store: OK"

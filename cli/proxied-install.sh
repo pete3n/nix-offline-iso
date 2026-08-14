@@ -1,3 +1,4 @@
+# shellcheck disable=2148
 # proxied-install: CLI NixOS installer for binary cache proxies. 
 # Installs the Flake target the user cloned to /tmp/nix-cfg, pulling every 
 # dependency through the cache proxy that proxy-setup declared. 
@@ -21,7 +22,8 @@ PIN_FILE="${PIN_FILE:-/etc/determinate-pin}"
 usage() {
   cat <<EOF
 Usage: proxied-install [--disk /dev/DEVICE] [--host NAME] [--root DIR]
-                       [--no-disko] [--no-verify] [--config DIR] [--cache-url URL]
+                       [--no-disko] [--no-verify] [--config DIR | --flake REF]
+                       [--cache-url URL]
 
   --disk DEV       Wipe DEV and create a single-disk layout (GPT: 1024MiB ESP
                    + ext4 root), mount it at --root, then install. DESTROYS
@@ -38,6 +40,15 @@ Usage: proxied-install [--disk /dev/DEVICE] [--host NAME] [--root DIR]
                    disk to catch storage that silently loses writes).
   --config DIR     The Flake target to install (default /tmp/nix-cfg — where
                    the MOTD flow clones your Config repo).
+  --flake REF      Flake-ref install (see CONTEXT.md): build the committed
+                   rev straight from a flake reference to your Config repo
+                   (e.g. 'git+ssh://git.lan/srv/git/nix.git'), cloning
+                   nothing. The ref must already commit this host's hardware
+                   config or a disko layout — there is no generate-and-merge
+                   — and the Target keeps no /etc/nixos checkout (it rebuilds
+                   by ref). For SSH refs, put the key in root's ~/.ssh/config
+                   (a Host entry with IdentityFile): nix's git fetcher
+                   ignores GIT_SSH_COMMAND.
   --cache-url URL  Override the Cache URL recorded by proxy-setup.
 
 Run 'sudo proxy-setup' first: this installer refuses to start without a
@@ -45,6 +56,7 @@ declared, probed Cache URL — every dependency is pulled through it.
 EOF
 }
 
+FLAKE_REF=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --disk) DISK="$2"; shift 2 ;;
@@ -53,19 +65,26 @@ while [ "$#" -gt 0 ]; do
     --no-disko) NO_DISKO=1; shift ;;
     --no-verify) NO_VERIFY=1; shift ;;
     --config) CFG="$2"; shift 2 ;;
+    --flake) FLAKE_REF="$2"; shift 2 ;;
     --cache-url) CACHE_URL="$2"; shift 2 ;;
     -h | --help) usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage; exit 1 ;;
   esac
 done
 
+# One source per install: a working copy or a flake ref, never both.
+if [ -n "$FLAKE_REF" ] && [ -n "$CFG" ]; then
+  echo "--flake and --config conflict: pick the working copy or the ref." >&2
+  exit 1
+fi
+
 if [ -z "$TEST_PREFIX" ] && [ "$(id -u)" -ne 0 ]; then
   echo "proxied-install must run as root (try: sudo proxied-install ...)" >&2
   exit 1
 fi
 
-# The Proxied install's gate: no declared Cache URL, no install. proxy-setup
-# records the URL only after its Reachability probe passed and the live
+# The proxied install's check: no declared cache URL, no install. proxy-setup
+# records the URL only after its connectivity check passed and the live
 # substituters were rerouted, so the file's existence means "setup done".
 if [ -z "$CACHE_URL" ] && [ -r "$URL_FILE" ]; then
   CACHE_URL="$(head -n 1 "$URL_FILE")"
@@ -86,39 +105,83 @@ export NIX_CONFIG="${NIX_CONFIG:-}
 extra-experimental-features = nix-command flakes
 substituters = $CACHE_URL"
 
-# Locate the flake target: the working copy the user cloned (or edited) 
-# per the MOTD flow.
-src="${CFG:-/tmp/nix-cfg}"
-if [ ! -e "$src/flake.nix" ]; then
-  echo "No flake.nix in $src." >&2
-  echo "Clone your config repo first:  git clone <your-repo-url> $src" >&2
-  echo "(This branch installs Flake targets only: a plain configuration.nix" >&2
-  echo "cannot declare the proxied substituter and input URLs it needs.)" >&2
-  exit 1
-fi
-echo ">> Using configuration from $src"
+# Default to turning of Determinate telemetry (it wouldn't reach them anyway).
+export DETSYS_IDS_TELEMETRY=disabled
 
-# Pin match (CONTEXT.md): Determinate's nix outputs are not substitutable
-# from any anonymous cache. A config pinning the determinate rev this ISO
-# was built with installs those outputs straight from the live store; any
-# other pin means compiling Nix from source through the proxy. narHash is
-# the identity — tarball locks carry no git rev, and the URL may
-# legitimately differ while the content matches.
+# Locate the flake target: a flake ref straight to the config repo, or the 
+# working copy the user cloned (and maybe edited) per the MOTD flow. 
+if [ -n "$FLAKE_REF" ]; then
+  src="$FLAKE_REF"
+  echo ">> Flake-ref install from $src"
+  echo "   The committed rev is what installs: this host's hardware config"
+  echo "   (or a disko layout) must already be committed, but nothing is"
+  echo "   generated or merged, and the target keeps no /etc/nixos"
+  echo "   checkout: it rebuilds by ref."
+else
+	# Locate the flake target: the working copy the user cloned (or edited) 
+	# per the MOTD flow.
+  src="${CFG:-/tmp/nix-cfg}"
+  if [ ! -e "$src/flake.nix" ]; then
+    echo "No flake.nix in $src." >&2
+    echo "Clone your Config repo first:  git clone <your-repo-url> $src" >&2
+    echo "(or install a committed rev without cloning: --flake REF; see" >&2
+    echo "--help for the SSH key setup that needs)" >&2
+    echo "(This branch installs Flake targets only: a plain configuration.nix" >&2
+    echo "cannot declare the proxied substituter and input URLs it needs.)" >&2
+    exit 1
+  fi
+  echo ">> Using configuration from $src"
+fi
+
+# Determinate's nix outputs are not substitutable from any anonymous cache. 
+# A config pinning the determinate rev this ISO was built with installs those 
+# outputs straight from the live store; any other pin means compiling Nix from 
+# source through the proxy.
 #
-# A missing lock is NOT an error: locking at install time is just another
-# fetch through the Cache proxy, and an unreachable input URL is an
-# appliance allow-list concern that surfaces as an ordinary fetch error —
-# never an installer gate. The check is simply skipped.
+# A missing lock is not an error: locking at install time is just another
+# fetch through the cache proxy, and an unreachable input URL is a proxy 
+# allow-list concern that creates a fetch error. This isn't an installer
+# concern, so the check is skipped.
 iso_pin=""
 if [ -r "$PIN_FILE" ]; then
   iso_pin="$(grep '^narHash: ' "$PIN_FILE" | head -n 1 | cut -d' ' -f2)"
 fi
 cfg_pin=""
-if [ ! -e "$src/flake.lock" ]; then
-  echo ">> note: $src has no flake.lock — skipping the Pin match check. The"
-  echo "   build resolves and locks the inputs through the Cache proxy, and"
+pin_skipped=0
+if [ -n "$FLAKE_REF" ]; then
+  # A ref has no local lock to read: `nix flake metadata` fetches the flake
+  # which is the first LAN/SSH touch of this install. This should fail loudly 
+	# and early with the key hint. A lockless repo resolves its inputs through the 
+	# cache proxy, the same install-time locking the clone method uses.
+  meta_json="$(mktemp)"
+  if ! nix flake metadata --json "$src" > "$meta_json" 2> "$meta_json.err"; then
+    echo "Could not fetch the flake at $src:" >&2
+    sed 's/^/  /' "$meta_json.err" >&2 || true
+    echo "For git+ssh refs, nix's git fetcher ignores GIT_SSH_COMMAND: the" >&2
+    echo "Provisioning key must come from root's ~/.ssh/config (a Host entry" >&2
+    echo "with IdentityFile). Check the LAN git host is reachable, then" >&2
+    echo "re-run." >&2
+    rm -f "$meta_json" "$meta_json.err"
+    exit 1
+  fi
+  rm -f "$meta_json.err"
+  cfg_pin="$(nix eval --raw --impure --expr "
+    let
+      lock = (builtins.fromJSON (builtins.readFile \"$meta_json\")).locks;
+      ref = (lock.nodes.\${lock.root}.inputs or { }).determinate or null;
+    in
+    if ref == null || !builtins.isString ref then
+      \"\"
+    else
+      (lock.nodes.\${ref}.locked or { }).narHash or \"\"
+  " 2>/dev/null || true)"
+  rm -f "$meta_json"
+elif [ ! -e "$src/flake.lock" ]; then
+  pin_skipped=1
+  echo ">> note: $src has no flake.lock — skipping the pin match check. The"
+  echo "   build resolves and locks the inputs through the cache proxy, and"
   echo "   the installed /etc/nixos keeps the written lock (it is your clone:"
-  echo "   commit it back to your Config repo for reproducible reinstalls)."
+  echo "   commit it back to your config repo for reproducible reinstalls)."
 else
   cfg_pin="$(nix eval --raw --impure --expr "
     let
@@ -131,22 +194,22 @@ else
       (lock.nodes.\${ref}.locked or { }).narHash or \"\"
   " 2>/dev/null || true)"
 fi
-if [ ! -e "$src/flake.lock" ]; then
+if [ "$pin_skipped" -eq 1 ]; then
   : # note already printed above
 elif [ -z "$iso_pin" ]; then
-  echo ">> note: no readable $PIN_FILE on this installer; skipping the Pin"
+  echo ">> note: no readable $PIN_FILE on this installer; skipping the pin"
   echo "   match check."
 elif [ -z "$cfg_pin" ]; then
-  echo ">> note: no 'determinate' input in $src/flake.lock — skipping the Pin"
-  echo "   match check. (If the config uses Determinate under another input"
-  echo "   name, a mismatched pin still compiles Nix from source.)"
+  echo ">> note: no 'determinate' input in the lock of $src — skipping the"
+  echo "   pin match check. (If the config uses Determinate under another"
+  echo "   input name, a mismatched pin still compiles Nix from source.)"
 elif [ "$cfg_pin" != "$iso_pin" ]; then
   echo "WARNING: Pin mismatch. Your config pins determinate"
   echo "           $cfg_pin"
   echo "         but this ISO was built with"
   echo "           $iso_pin"
   echo "         Determinate's nix is not on any anonymous cache, so this"
-  echo "         install will COMPILE NIX FROM SOURCE through the proxy —"
+  echo "         install will COMPILE NIX FROM SOURCE through the proxy: "
   echo "         expect a long build. Pin the ISO's rev (shown in"
   echo "         $PIN_FILE) to install it from the live store instead."
   printf 'Type YES to continue anyway: '
@@ -161,7 +224,7 @@ fi
 
 # Resolve the flake config to install when --host was not given: prefer one
 # named "nixos", else the sole entry. Fall back to the hostname. The
-# trailing `|| true` is load-bearing — this script runs under `set -e`
+# trailing `|| true` is required because this script runs under `set -e`
 # (writeShellApplication), where a bare HOST="$(cmd)" assignment adopts the
 # command's exit status, so a failing eval would abort the script here
 # instead of falling through to the hostname fallback.
@@ -180,18 +243,17 @@ if [ -z "$HOST" ]; then
 fi
 echo ">> Target config: nixosConfigurations.$HOST"
 
-# One full module evaluation answers two pre-flight questions: does the
+# One full module evaluation answers two pre-install questions: does the
 # config declare a disko layout (then disko owns partitioning), and do its
-# declared substituters include the Cache URL (else the first rebuild after
-# reboot cannot reach the proxy — persistence is declared in the Config
-# repo, never injected here; see ADR 0003).
+# declared substituters include the cache URL (else the first rebuild after
+# reboot cannot reach the proxy.
 is_disko=0
 subs_warned=0
-echo ">> Evaluating nixosConfigurations.$HOST (full config evaluation — this"
+echo ">> Evaluating nixosConfigurations.$HOST (full config evaluation, this"
 echo "   can take minutes, and the first run fetches inputs through the"
-echo "   Cache proxy; no output is normal)..."
+echo "   cache proxy; no output is normal)..."
 eval_json="$(nix eval --json \
-  "$src#nixosConfigurations.$HOST.config" \
+  "$src#nixosConfigurations.\"$HOST\".config" \
   --apply 'cfg: {
     disko = cfg.system.build ? diskoScript;
     diskoDevices =
@@ -221,10 +283,10 @@ else
   if ! printf '%s' "$eval_json" | grep -qF "\"$CACHE_URL\""; then
     subs_warned=1
     echo "WARNING: the target's declared substituters do not include the"
-    echo "         Cache URL used for this install ($CACHE_URL)."
-    echo "         After reboot, the first nixos-rebuild will NOT reach the"
-    echo "         Cache proxy. Declare it in your Config repo, e.g.:"
-    echo "           nix.settings.substituters = [ \"http://nix-proxy.lan\" ];"
+    echo "         cache URL used for this install ($CACHE_URL)."
+    echo "         After reboot, the first nixos-rebuild will not reach the"
+    echo "         cache proxy. Declare it in your config repo, e.g.:"
+    echo "           nix.settings.substituters = [ \"$CACHE_URL\" ];"
     echo "         (Also check the alias-vs-IP case: declaring the .lan name"
     echo "         while installing via IP means the name must resolve on"
     echo "         the installed machine.)"
@@ -232,15 +294,15 @@ else
 fi
 
 if [ "$is_disko" -eq 1 ]; then
-  # disko owns the disk layout: it wipes the device(s) DECLARED IN THE CONFIG,
+  # disko owns the disk layout: it wipes the device(s) declared in the config,
   # and --disk cannot redirect it. Silently proceeding on the declared disk
-  # when the operator explicitly named a different one is how the wrong disk
-  # gets erased — refuse instead.
+  # when the user explicitly named a different one. Prevent the wrong disk from
+	# getting erased by refusing this operations.
   if [ -n "$DISK" ]; then
     echo "ERROR: --disk $DISK conflicts with this config's disko layout, which" >&2
     echo "partitions the device(s) it declares: ${disko_devices:-(unknown)}" >&2
     echo "Refusing to guess which disk you meant. Either:" >&2
-    echo "  - re-run WITHOUT --disk to let disko wipe the declared device(s), or" >&2
+    echo "  - re-run without --disk to let disko partition the declared device(s), or" >&2
     echo "  - edit the disko device in $src to $DISK and re-run, or" >&2
     echo "  - pass --no-disko (with --disk or manual partitioning); note the" >&2
     echo "    config's disko-declared fileSystems must still match what you make." >&2
@@ -258,7 +320,7 @@ if [ "$is_disko" -eq 1 ]; then
       exit 1
     fi
   done
-  echo ">> disko target: this WIPES and partitions the disk(s) declared in your"
+  echo ">> disko target: this ERASES and partitions the disk(s) declared in your"
   echo "   config, then formats and mounts them at /mnt:"
   echo "     ${disko_devices:-(devices could not be determined from the config)}"
   printf 'Type YES to continue: '
@@ -268,10 +330,10 @@ if [ "$is_disko" -eq 1 ]; then
     exit 1
   fi
   echo ">> Resolving the disko script (re-evaluates the config, and may fetch"
-  echo "   or build through the Cache proxy; takes a few minutes, then"
+  echo "   or build through the cache proxy; takes a few minutes, then"
   echo "   partitioning starts)..."
   disko_script="$(nix build --no-link --print-out-paths \
-    "$src#nixosConfigurations.$HOST.config.system.build.diskoScript")"
+    "$src#nixosConfigurations.\"$HOST\".config.system.build.diskoScript")"
   "$disko_script"
   # disko mounts at its declared rootMountPoint (default /mnt).
   ROOT=/mnt
@@ -331,13 +393,21 @@ if ! mountpoint -q "$ROOT"; then
   exit 1
 fi
 
-if [ "$is_disko" -eq 1 ]; then
+if [ -n "$FLAKE_REF" ]; then
+  # Flake-ref install: nothing lands in /etc/nixos, and the committed rev is 
+	# the only source. The target rebuilds by ref, and nixos-generate-config is 
+	# not utilized. There is no working copy to merge its output into, which is 
+	# why the ref must commit this host's hardware config (or a disko layout, 
+	# which skips generation in every mode).
+  build_src="$src"
+elif [ "$is_disko" -eq 1 ]; then
   # disko already declares every fileSystems entry, so nixos-generate-config
-  # must NOT run — a second fileSystems."/" definition is an eval conflict. The
+  # must NOT run a second fileSystems. "/" definition is an eval conflict. The
   # committed hardware-configuration.nix supplies kernel modules only.
   mkdir -p "$ROOT/etc/nixos"
   cp -rT "$src" "$ROOT/etc/nixos"
   chmod -R u+w "$ROOT/etc/nixos"
+  build_src="$ROOT/etc/nixos"
 else
   nixos-generate-config --root "$ROOT"
   hw="$ROOT/etc/nixos/hardware-configuration.nix"
@@ -350,15 +420,16 @@ else
   chmod -R u+w "$ROOT/etc/nixos"
   cp -f "$hw_saved" "$hw"
   rm -f "$hw_saved"
+  build_src="$ROOT/etc/nixos"
 fi
 
 # Building here (not via `nixos-install --flake`/chroot) keeps the build in
 # the live store, whose substituters point at the Cache proxy (both via
 # proxy-setup's reroute and this script's NIX_CONFIG); `--system` then just
 # copies the closure onto the target.
-echo ">> Building nixosConfigurations.$HOST through the Cache proxy"
+echo ">> Building nixosConfigurations.$HOST through the cache proxy"
 top="$(nix build --no-link --print-out-paths \
-  "$ROOT/etc/nixos#nixosConfigurations.$HOST.config.system.build.toplevel")"
+  "$build_src#nixosConfigurations.\"$HOST\".config.system.build.toplevel")"
 
 # --no-channel-copy: a flake-managed system has no use for a root channel,
 # and copying one would realize the channel derivation inside the target
@@ -390,9 +461,17 @@ fi
 echo ">> Installation complete."
 if [ "$subs_warned" -eq 1 ]; then
   echo "REMINDER: the installed system's declared substituters do not include"
-  echo "          $CACHE_URL — fix your Config repo before the first rebuild,"
-  echo "          or it will not reach the Cache proxy."
+  echo "          $CACHE_URL — fix your config repo before the first rebuild,"
+  echo "          or it will not reach the cache proxy."
+fi
+if [ -n "$FLAKE_REF" ]; then
+  echo ">> Flake-ref install: this system keeps no /etc/nixos checkout."
+  echo "   Rebuild it by ref, e.g."
+  echo "     nixos-rebuild switch --flake '$src#\"$HOST\"'"
+  echo "   Repo access on the installed machine comes from what its own"
+	echo "   configuration declares (keys, known hosts), nothing was copied"
+  echo "   from this installer environment."
 fi
 echo ">> Reboot into your new system. Log in with the credentials from your"
-echo "   configuration; rebuilds substitute through the Cache proxy your"
+echo "   configuration; rebuilds substitute through the cache proxy your"
 echo "   config declares."
