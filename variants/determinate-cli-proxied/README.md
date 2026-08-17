@@ -71,6 +71,22 @@ install, and ADR 0010):
   `hardware-configuration.nix` or a disko layout. There is no
   `nixos-generate-config`-and-merge in this mode; a host the repo doesn't
   know yet is what the clone-and-edit flow (steps 5–6) is for.
+- **The `--disk` label contract.** A config that commits a disko layout
+  never needs `--disk` (and the installer refuses the combination — disko
+  wipes the device the *config* declares). A config *without* disko may be
+  installed with `--disk /dev/sdX`, but because nothing is generated in
+  this mode, the committed config must reference the filesystems **by the
+  labels `--disk` creates** — UUIDs cannot be committed for a disk that
+  does not exist yet:
+
+  ```nix
+  fileSystems."/" =     { device = "/dev/disk/by-label/nixos"; fsType = "ext4"; };
+  fileSystems."/boot" = { device = "/dev/disk/by-label/boot";  fsType = "vfat"; };
+  ```
+
+  (`--disk` creates no swap; do not declare one.) A config carrying
+  by-UUID entries from other hardware installs cleanly and then fails to
+  mount at boot — commit the labels or commit disko.
 - **SSH access**: nix's git fetcher ignores `GIT_SSH_COMMAND`, so the key
   must come from root's `~/.ssh/config` on the live installer:
 

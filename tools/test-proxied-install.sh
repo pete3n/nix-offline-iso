@@ -276,9 +276,11 @@ done
 if command -v nix > /dev/null 2>&1; then
   matrix_expr="(import $repo/nix/lib.nix { nixpkgs = null; }).builderPrefills.cacheUrl"
   matrix_eval() {
-    nix --extra-experimental-features nix-command eval --impure --expr "$matrix_expr" 2>&1
+    # lib.nix uses the bare `fetchTree` global, in scope only with the
+    # flakes feature — enable it or the import fails as undefined variable.
+    nix --extra-experimental-features 'nix-command flakes' eval --impure --expr "$matrix_expr" 2>&1
   }
-  if [ "$(env -u ISO_CACHE_URL "$(command -v nix)" --extra-experimental-features nix-command \
+  if [ "$(env -u ISO_CACHE_URL "$(command -v nix)" --extra-experimental-features 'nix-command flakes' \
     eval --impure --expr "$matrix_expr" 2> /dev/null)" = "null" ]; then
     ok "builderPrefills: unset ISO_CACHE_URL evaluates to null (pure default)"
   else
@@ -448,6 +450,27 @@ if command -v nix > /dev/null 2>&1; then
     run_case "flake-ref: '@' config names resolve and evaluate (quoted attr paths)" 1 \
       "declared substituters do not include" \
       -- pi_run "$sb" --flake "path:$cfg" --root "$sandbox/not-a-mountpoint"
+
+    # The same credential-less fixture must trip the lockout preflight:
+    # nixos-install runs --no-root-passwd, so a config with no user
+    # credential installs an unloggable system (field-found).
+    run_case "flake-ref: credential-less config warns about lockout" 1 \
+      "login credential" \
+      -- pi_run "$sb" --flake "path:$cfg" --root "$sandbox/not-a-mountpoint"
+
+    # And a config WITH a credential must not warn.
+    sb="$sandbox/pi-flake-cred"
+    mkurl "$sb"
+    cfg="$sandbox/cfg-flake-cred"
+    mkdir -p "$cfg"
+    echo '{ outputs = _: { nixosConfigurations."bob@host-2" = { config = { system.build = { }; nix.settings.substituters = [ ]; users.users.bob = { initialPassword = "changeme"; }; }; }; }; }' > "$cfg/flake.nix"
+    cred_out="$(pi_run "$sb" --flake "path:$cfg" --root "$sandbox/not-a-mountpoint" 2>&1 || true)"
+    if printf '%s' "$cred_out" | grep -q "login credential"; then
+      bad "flake-ref: credentialed config still warned about lockout"
+      note "got: $(printf '%s' "$cred_out" | tr '\n' ' ' | head -c 220)"
+    else
+      ok "flake-ref: credentialed config does not warn about lockout"
+    fi
   else
     echo "skip - nix cannot fetch path flakes here: skipping the flake-ref ref cases"
   fi

@@ -153,6 +153,10 @@ fi
 lock_flags=()
 if [ -n "$FLAKE_REF" ]; then
   lock_flags+=(--no-write-lock-file)
+  # nix caches git ref resolution (~1h TTL): without this, "install main"
+  # can silently install a rev cached from an earlier attempt instead of
+  # the tip just pushed. An installer must install the ref as of NOW.
+  lock_flags+=(--refresh)
 fi
 
 iso_pin=""
@@ -275,6 +279,19 @@ eval_json="$(nix eval --json "${lock_flags[@]}" \
       else
         [ ];
     subs = cfg.nix.settings.substituters or [ ];
+    # nixos-install runs --no-root-passwd on purpose (credentials are
+    # declared, never typed at install) — so a config in which no user
+    # carries any credential produces a perfect, unloggable system.
+    loginOk = builtins.any (
+      user:
+      (user.hashedPassword or null) != null
+      || (user.password or null) != null
+      || (user.initialPassword or null) != null
+      || (user.initialHashedPassword or null) != null
+      || (user.hashedPasswordFile or null) != null
+      || (user.openssh.authorizedKeys.keys or [ ]) != [ ]
+      || (user.openssh.authorizedKeys.keyFiles or [ ]) != [ ]
+    ) (builtins.attrValues (cfg.users.users or { }));
   }' 2>/dev/null || true)"
 # The device list disko will wipe, extracted from the JSON without jq
 # (space-separated; empty when unknown).
@@ -293,6 +310,15 @@ else
       fi
       ;;
   esac
+  if printf '%s' "$eval_json" | grep -qF '"loginOk":false'; then
+    echo "WARNING: no user in this config declares any login credential"
+    echo "         (hashed/initial password, password file, or SSH key)."
+    echo "         The installer never sets a root password (--no-root-passwd:"
+    echo "         credentials are declared, not typed), so the installed"
+    echo "         system may be impossible to log in to. Declare a user"
+    echo "         credential in your Config repo. (Ignore this if login is"
+    echo "         provided by a mechanism this check cannot see, e.g. LDAP.)"
+  fi
   if ! printf '%s' "$eval_json" | grep -qF "\"$CACHE_URL\""; then
     subs_warned=1
     echo "WARNING: the target's declared substituters do not include the"
