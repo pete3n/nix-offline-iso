@@ -248,7 +248,7 @@ if grep -q '/etc/installer-prefills' "$repo/cli/proxy-setup.sh" \
 else
   bad "drift: proxy-setup's prefills read diverged from the bake"
 fi
-getenv_files="$(grep -rl 'builtins\.getEnv' "$repo" --include='*.nix' 2> /dev/null | sort)"
+getenv_files="$(grep -rl 'builtins\.getEnv' "$repo" --include='*.nix' --exclude-dir=.git 2> /dev/null | sort)"
 if [ "$getenv_files" = "$repo/nix/lib.nix" ]; then
   ok "drift: builtins.getEnv appears only in nix/lib.nix"
 else
