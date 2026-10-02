@@ -52,6 +52,26 @@ nix build .#packages.aarch-64-linux.installer-iso-nixos-cli-offline
 
   The target configuration path can be either relative or absolute.
 
+  A target can also be a flake in a subdirectory of a larger repository,
+  for example one that reaches shared modules through a relative path input
+  (`path:../../lib`). Point the override at the repository with `?dir=`:
+
+  ```
+  nix build .#installer-iso-determinate-cli-offline \
+  --override-input target-determinate-cli-offline 'path:/path/to/repo?dir=hosts/myhost'
+  ```
+
+  The ISO then carries the whole repository, and `offline-install` builds
+  from that subdirectory (recorded in the baked config's `.flake-dir`, or
+  given with `--flake-dir`). Relative inputs stay as they are in the lock;
+  they resolve inside the copied repository. Overriding with
+  `path:/path/to/repo/hosts/myhost` instead copies only that directory, and
+  a relative input pointing outside it fails.
+
+  Subdirectory targets are supported by the CLI installer (`offline-install`)
+  only; the graphical installer still expects `flake.nix` at the top of the
+  baked config.
+
 - **Proxied**: the ISO bakes nothing and owns no URLs. The target configuration 
   is intended to be provided at install time. This method was specifically designed
   to utilized a [private cache proxy](https://nixos.wiki/wiki/FAQ/Private_Cache_Proxy). 

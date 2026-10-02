@@ -7,6 +7,7 @@ HOST=""
 NO_DISKO=0
 NO_VERIFY=0
 CFG_DIR=""
+FLAKE_DIR=""
 
 export NIX_CONFIG="${NIX_CONFIG:-}
 extra-experimental-features = nix-command flakes
@@ -15,7 +16,7 @@ trusted-substituters ="
 
 usage() {
   cat <<EOF
-Usage: offline-install [--disk /dev/DEVICE] [--host NAME] [--root DIR] [--no-disko] [--config DIR]
+Usage: offline-install [--disk /dev/DEVICE] [--host NAME] [--root DIR] [--no-disko] [--config DIR] [--flake-dir SUBDIR]
 
   --disk DEV   Wipe DEV and create a single-disk layout (GPT: 1024MiB ESP + ext4
                root), mount it at --root, then install. DESTROYS ALL DATA ON DEV.
@@ -30,6 +31,11 @@ Usage: offline-install [--disk /dev/DEVICE] [--host NAME] [--root DIR] [--no-dis
                (or use --disk); disko still owns the fileSystems config.
   --config DIR Configuration source directory. Default: /tmp/nix-cfg (the
                editable copy seeded at boot), else the baked /iso/nix-cfg.
+  --flake-dir SUBDIR
+               The flake lives in SUBDIR of the configuration source, which is
+               a whole source tree (so the flake can reach siblings through
+               relative path inputs). Default: what the ISO recorded in
+               .flake-dir, else the source's top level.
   --no-verify  Skip the post-install read-back verification of the target's
                Nix store (it re-reads the copied closure from disk to catch
                storage that silently loses writes).
@@ -50,6 +56,7 @@ while [ "$#" -gt 0 ]; do
     --no-disko) NO_DISKO=1; shift ;;
     --no-verify) NO_VERIFY=1; shift ;;
     --config) CFG_DIR="$2"; shift 2 ;;
+    --flake-dir) FLAKE_DIR="$2"; shift 2 ;;
     -h | --help) usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage; exit 1 ;;
   esac
@@ -60,6 +67,35 @@ if [ "$(id -u)" -ne 0 ]; then
   exit 1
 fi
 
+# The flake's directory within a configuration source: the source itself,
+# or SUBDIR of it when the ISO carries a whole source tree (.flake-dir).
+flake_subdir() {
+  if [ -n "$FLAKE_DIR" ]; then
+    printf '%s' "$FLAKE_DIR"
+  elif [ -s "$1/.flake-dir" ]; then
+    head -n 1 "$1/.flake-dir"
+  fi
+}
+flake_path() {
+  local subdir
+  subdir="$(flake_subdir "$1")"
+  printf '%s' "$1${subdir:+/$subdir}"
+}
+# A flake reference to the config in $1. A subdirectory flake is addressed
+# with ?dir= so Nix copies the whole tree and relative inputs resolve.
+flake_ref() {
+  local subdir
+  subdir="$(flake_subdir "$1")"
+  if [ -n "$subdir" ]; then
+    printf 'path:%s?dir=%s' "$1" "$subdir"
+  else
+    printf '%s' "$1"
+  fi
+}
+has_config() {
+  [ -e "$1/configuration.nix" ] || [ -e "$(flake_path "$1")/flake.nix" ]
+}
+
 # Locate the configuration source. --config wins; otherwise /tmp/nix-cfg (the
 # editable copy seeded at boot) wins over the baked-in read-only /iso/nix-cfg.
 # Found before partitioning because a disko target partitions the disk(s)
@@ -68,25 +104,27 @@ if [ -n "$CFG_DIR" ]; then
   src="$CFG_DIR"
 else
   src=/tmp/nix-cfg
-  if [ ! -e "$src/configuration.nix" ] && [ ! -e "$src/flake.nix" ]; then
+  if ! has_config "$src"; then
     src=/iso/nix-cfg
   fi
 fi
-if [ ! -e "$src/configuration.nix" ] && [ ! -e "$src/flake.nix" ]; then
-  echo "No configuration.nix or flake.nix in ${CFG_DIR:-/tmp/nix-cfg or /iso/nix-cfg}." >&2
+if ! has_config "$src"; then
+  echo "No configuration.nix or flake.nix in ${CFG_DIR:-/tmp/nix-cfg or /iso/nix-cfg}${FLAKE_DIR:+ (flake dir $FLAKE_DIR)}." >&2
   exit 1
 fi
-echo ">> Using configuration from $src"
+# Pin the subdirectory now, so the installed copy uses the same one.
+FLAKE_DIR="$(flake_subdir "$src")"
+echo ">> Using configuration from $src${FLAKE_DIR:+ (flake in $FLAKE_DIR)}"
 
 # Resolve the flake config to install when --host was not given. Mirror the
 # builder's pick so we target the config whose closure is actually baked into
 # the ISO: prefer one named "nixos", else the sole entry. Fall back to the
 # hostname.
-if [ -z "$HOST" ] && [ -e "$src/flake.nix" ]; then
+if [ -z "$HOST" ] && [ -e "$(flake_path "$src")/flake.nix" ]; then
   echo ">> Resolving the install target from the flake (offline evaluation)..."
   # Best-effort: pick the baked config's name. 
 	# Keep the failure from being fatal and silent.
-  HOST="$(nix eval --offline --raw "$src#nixosConfigurations" --apply '
+  HOST="$(nix eval --offline --raw "$(flake_ref "$src")#nixosConfigurations" --apply '
     cfgs:
     let names = builtins.attrNames cfgs; in
     if cfgs ? nixos then "nixos"
@@ -106,11 +144,11 @@ echo ">> Target config: nixosConfigurations.$HOST"
 # told exactly what will be wiped and we can sanity-check they exist.
 is_disko=0
 disko_devices=""
-if [ "$NO_DISKO" -eq 0 ] && [ -e "$src/flake.nix" ]; then
+if [ "$NO_DISKO" -eq 0 ] && [ -e "$(flake_path "$src")/flake.nix" ]; then
   echo ">> Evaluating nixosConfigurations.$HOST (full config evaluation --"
   echo "   this can take a few minutes on live media; no output is normal)..."
   disko_probe="$(nix eval --offline --raw \
-    "$src#nixosConfigurations.$HOST.config" \
+    "$(flake_ref "$src")#nixosConfigurations.$HOST.config" \
     --apply 'config:
       if config.system.build ? diskoScript then
         builtins.concatStringsSep " "
@@ -165,7 +203,7 @@ if [ "$is_disko" -eq 1 ]; then
   echo ">> Resolving the disko script (re-evaluates the config; takes a few"
   echo "   minutes, then partitioning starts)..."
   disko_script="$(nix build --offline --no-link --print-out-paths \
-    "$src#nixosConfigurations.$HOST.config.system.build.diskoScript")"
+    "$(flake_ref "$src")#nixosConfigurations.$HOST.config.system.build.diskoScript")"
   "$disko_script"
   # disko mounts at its declared rootMountPoint (default /mnt).
   ROOT=/mnt
@@ -239,6 +277,12 @@ else
   sed -i 's/\(fmask\|dmask\|umask\)=0022/\1=0077/g' "$hw"
   hw_saved="$(mktemp)"
   cp "$hw" "$hw_saved"
+  if [ -n "$FLAKE_DIR" ]; then
+    # The generated files belong beside the flake, not at the top of the
+    # source tree, where nothing imports them.
+    rm -f "$ROOT/etc/nixos/configuration.nix" "$hw"
+    hw="$ROOT/etc/nixos/$FLAKE_DIR/hardware-configuration.nix"
+  fi
   cp -rT "$src" "$ROOT/etc/nixos"
   chmod -R u+w "$ROOT/etc/nixos"
   cp -f "$hw_saved" "$hw"
@@ -247,11 +291,11 @@ fi
 
 # Building here (not via `nixos-install --flake`/chroot) keeps the build in the
 # store that actually has the inputs; `--system` then just copies the closure.
-if [ -e "$ROOT/etc/nixos/flake.nix" ]; then
+if [ -e "$(flake_path "$ROOT/etc/nixos")/flake.nix" ]; then
   echo ">> Flake install: building nixosConfigurations.$HOST in the live store"
   # Build and install exactly the toplevel the committed config declares.
   top="$(nix build --offline --no-link --print-out-paths \
-    "$ROOT/etc/nixos#nixosConfigurations.$HOST.config.system.build.toplevel")"
+    "$(flake_ref "$ROOT/etc/nixos")#nixosConfigurations.$HOST.config.system.build.toplevel")"
 else
   echo ">> Channels install: building the system in the live store"
   top="$(nix-build --no-out-link \
@@ -264,16 +308,17 @@ nixos-install --system "$top" --root "$ROOT" --no-root-passwd --no-channel-copy
 
 # Seed the target store with the flake's input source trees so the installed
 # system can re-evaluate its own flake offline.
-if [ -e "$ROOT/etc/nixos/flake.nix" ]; then
+if [ -e "$(flake_path "$ROOT/etc/nixos")/flake.nix" ]; then
   echo ">> Copying flake input sources into the target store (for offline rebuilds)"
   # Pull every path-pinned input out of the baked lock. Non-path nodes (and the
   # lockfile root node, which has no `locked`) fall through to null via `or` and
-  # are filtered out.
+  # are filtered out, and so are relative paths (`../lib`), which live in the
+  # copied tree rather than the store.
   mapfile -t src_paths < <(
     nix eval --offline --raw --impure --expr "
-      let lock = builtins.fromJSON (builtins.readFile \"$ROOT/etc/nixos/flake.lock\");
+      let lock = builtins.fromJSON (builtins.readFile \"$(flake_path "$ROOT/etc/nixos")/flake.lock\");
       in builtins.concatStringsSep \"\n\" (
-        builtins.filter (path: path != null)
+        builtins.filter (path: path != null && builtins.substring 0 1 path == \"/\")
           (map (node: node.locked.path or null) (builtins.attrValues lock.nodes)))
     "
   )

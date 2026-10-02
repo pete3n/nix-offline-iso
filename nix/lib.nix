@@ -264,6 +264,23 @@ rec {
         else
           [ ];
 
+      # A target can be a flake in a subdirectory of its source tree
+      # (`--override-input target-<product> 'path:/repo?dir=hosts/foo'`),
+      # typically so it can reach sibling directories through relative path
+      # inputs (`path:../../lib`). Its outPath is then <source>/<subdir>, and
+      # the ISO must carry the whole source tree, or those inputs are out of
+      # reach at install time. "" for a flake at the root of its source.
+      sourceRoot = targetFlake.sourceInfo.outPath or targetFlake.outPath;
+      flakeSubdir =
+        let
+          root = toString sourceRoot;
+          flakePath = toString targetFlake.outPath;
+        in
+        if flakePath == root then
+          ""
+        else
+          builtins.substring (builtins.stringLength root + 1) (-1) flakePath;
+
       # The target flake must ship a committed lock. Read from the input's
       # source, so --override-input targets bring their own.
       targetLockPath = "${targetFlake}/flake.lock";
@@ -283,9 +300,17 @@ rec {
       # `locked` ref to that store path. `lastModified` is stripped from the
       # fetch args (it is an output of fetchTree, not an accepted input) but
       # kept in the rewritten node.
+      # A relative path input (`path:../../lib`) locks as a path relative to
+      # its parent flake, not as a store path, and resolves inside the source
+      # tree, which the ISO carries whole (see flakeSubdir). There is nothing
+      # to fetch or repin, so it is kept exactly as locked.
+      isRelativePath =
+        node:
+        (node.locked.type or "") == "path" && !(nixpkgs.lib.hasPrefix "/" (node.locked.path or "/"));
+
       pinNode =
         _name: node:
-        if node ? locked then
+        if node ? locked && !isRelativePath node then
           let
             fetched = fetchTree (removeAttrs node.locked [ "lastModified" ]);
           in
@@ -318,13 +343,27 @@ rec {
         map (entry: entry.source) (builtins.attrValues pinned)
       );
 
-      flakeCfgDir = pkgs.runCommand "offline-flake-cfg" { } ''
-        cp -r ${targetFlake} $out
-        chmod -R u+w $out
-        cp ${pkgs.writeText "flake.lock" offlineLock} $out/flake.lock
-        # Keep it writable in case nix ever wants to touch it on the target.
-        chmod u+w $out/flake.lock
-      '';
+      # The config the ISO carries to /iso/nix-cfg: the target's whole
+      # source tree when it lives in a subdirectory (with that subdirectory
+      # named in .flake-dir for offline-install), else just the flake.
+      flakeCfgDir = pkgs.runCommand "offline-flake-cfg" { } (
+        if flakeSubdir == "" then
+          ''
+            cp -r ${targetFlake} $out
+            chmod -R u+w $out
+            cp ${pkgs.writeText "flake.lock" offlineLock} $out/flake.lock
+            # Keep it writable in case nix ever wants to touch it on the target.
+            chmod u+w $out/flake.lock
+          ''
+        else
+          ''
+            cp -r ${sourceRoot} $out
+            chmod -R u+w $out
+            cp ${pkgs.writeText "flake.lock" offlineLock} $out/${flakeSubdir}/flake.lock
+            chmod u+w $out/${flakeSubdir}/flake.lock
+            printf '%s\n' ${nixpkgs.lib.escapeShellArg flakeSubdir} > $out/.flake-dir
+          ''
+      );
     in
     {
       inherit flakeCfgDir targetToplevel;
