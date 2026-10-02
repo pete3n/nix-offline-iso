@@ -40,7 +40,10 @@ nix build .#packages.aarch-64-linux.installer-iso-nixos-cli-offline
 - **Offline**: the offline installer ISOs bake their derivation closure, and every 
   flake input's source, with the lock repinned to store paths so the install 
   (and later rebuilds for configuration edits on the installed system) 
-  can be performed on an air-gapped system. The offline variants provide an 
+  can be performed on an air-gapped system. (`determinate-cli-offline` is the
+  exception: it bakes no derivation closure, so its targets must commit their
+  hardware config and carry their own rebuild tools; see its README.)
+  The offline variants provide an 
   example target configuration under `variants/<variant>/configs/`; 
   replace it with your own configuration, or build with
   `--override-input target-<variant> path:/your/flake` for example:
@@ -110,7 +113,9 @@ Every harness in `tools/` runs quickly without building an ISO:
 `test-offline-install-args.sh` (installer arg safety for disk partitioning), 
 `test-offline-rebuild.sh <variant-configs>` (target config offline rebuild test),
 `test-overlay.sh` / `test-proxy-screen.sh` (proxy URL config test), 
-`test-proxied-install.sh`. 
+`test-proxied-install.sh`. `test-drv-identity.sh` (needs network) dry-runs the
+`determinate-cli-offline` build and fails if it would compile Determinate Nix
+from source; run it before building that ISO. 
 
 ## Versioning
 

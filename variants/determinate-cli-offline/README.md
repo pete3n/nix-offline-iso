@@ -66,11 +66,24 @@ redirects the generated `nix.conf` to `/etc/nix/nix.custom.conf`, which
 `determinate-nixd` includes. Determinate additionally pins a *system* flake-registry 
 entry for `nixpkgs` to a FlakeHub tarball, which `flake-registry = ""` does not 
 cover, so the installer also forces `nix.registry = {}` (empty) (see 
-[Determinate Nix](#determinate-nix)). Because `nixos-generate-config` regenerates 
-`hardware-configuration.nix` for the target machine at install time, the 
-installed system differs slightly from what was pre-built, so a small rebuild 
-must be performed. The ISO bakes the target's **build/derivation closure** so that 
-the rebuild runs offline from sources already in the store.
+[Determinate Nix](#determinate-nix)).
+
+Unlike the `nixos-*-offline` variants, this ISO does **not** bake the
+target's build/derivation closure: Determinate's build graph contains outputs
+no binary cache publishes, so baking it would make the ISO unbuildable. That
+means nothing can be rebuilt at install time, so commit the target's real
+hardware: a disko layout plus a `hardware-configuration.nix` that matches the
+machine. With disko, `offline-install` skips `nixos-generate-config`, the
+offline evaluation reproduces exactly what was baked, and the install just
+copies it. A target whose hardware config diverges at install time cannot
+rebuild offline from the ISO alone.
+
+Rebuilding the **installed** system offline later (changing an address, SSH
+settings, the firewall) is the target's own job: its configuration must keep
+the build tools those changes run in its own closure, for example by
+referencing them from a file under `/etc`. The example config does this with
+`/etc/nixos/offline-rebuild-deps`, and `tools/test-offline-rebuild.sh` checks
+it.
 
 ## Determinate Nix
 
@@ -170,8 +183,8 @@ Offline flake installs require several workarounds (see
    named `nixos`, or the sole entry if there is only one.
 
 3. **Bake the inputs** into the closure. The ISO store carries the target
-   system's built closure, its derivation closure (`.drv`s + source tarballs, for
-   the hardware-config rebuild), and the source tree of every flake input.
+   system's built closure and the source tree of every flake input (but not
+   its derivation closure; see [How it works](#how-it-works)).
 
 You **must** commit a git-tracked `configs/flake/flake.lock` (generate it with
 `nix flake lock ./configs/flake`); the builder reads it to learn which input

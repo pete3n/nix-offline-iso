@@ -12,6 +12,15 @@ let
   bake = shared.mkFlakeTargetBake {
     inherit system targetFlake;
     variantName = "determinate-cli-offline";
+    # Unbakeable for Determinate targets: the build graph contains outputs
+    # no cache publishes (separateDebugInfo debug outputs) whose rebuild
+    # dies on sentry-native's git+submodules fetch. Determinate targets
+    # install a committed disko config verbatim (offline-install skips
+    # nixos-generate-config; the offline eval reproduces the baked drvs, so
+    # nothing rebuilds at install time). Offline rebuilds after install are
+    # the target's own job: it must keep the build tools its changes need in
+    # its own closure (see README).
+    bakeBuildDependencies = false;
   };
 
   installer = nixpkgs.lib.nixosSystem {

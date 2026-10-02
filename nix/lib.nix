@@ -227,6 +227,18 @@ rec {
       system,
       targetFlake,
       variantName,
+      # Bake the target's BUILD closure (drvs + sources + every build-time
+      # output) so divergent-hardware installs can rebuild glue derivations
+      # offline. This is all-or-nothing by Nix semantics: a raw drvPath in
+      # storeContents realizes every output of every drv in the build graph
+      # at bake time, and exportReferencesGraph lists those outputs into the
+      # image either way — so an unrealizable output anywhere in the graph
+      # (e.g. Determinate's unpublished separateDebugInfo outputs, whose
+      # rebuild dies on sentry-native's un-routable git fetch) makes the ISO
+      # unbuildable. Variants whose targets install a committed config
+      # verbatim (disko + committed hardware-configuration.nix: the eval
+      # reproduces the baked drvs, nothing rebuilds) turn this off.
+      bakeBuildDependencies ? true,
     }:
     let
       pkgs = nixpkgs.legacyPackages.${system};
@@ -370,12 +382,15 @@ rec {
       extraStoreContents = [
         # Built target system (runtime closure).
         targetToplevel
-        # The target's derivation closure: .drvs + source tarballs, so the
-        # parts that differ from the pre-baked build (because
-        # nixos-generate-config regenerates hardware-configuration.nix) can
-        # be rebuilt offline from source.
-        targetToplevel.drvPath
       ]
+      # The target's build closure, for offline rebuilds after
+      # nixos-generate-config regenerates hardware-configuration.nix. The
+      # raw drvPath realizes and bakes every build-time output — see the
+      # bakeBuildDependencies doc above for why this must be optional.
+      # (unsafeDiscardOutputDependency is NOT a lighter middle ground:
+      # exportReferencesGraph still lists the unrealized outputs and
+      # mksquashfs dies statting them — field-found 2026-08-18.)
+      ++ (if bakeBuildDependencies then [ targetToplevel.drvPath ] else [ ])
       ++ diskoStoreContents
       # Every flake input's source, so the baked path-pinned lock resolves
       # entirely from the store offline.
