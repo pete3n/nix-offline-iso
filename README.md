@@ -88,8 +88,14 @@ nix build .#packages.aarch-64-linux.installer-iso-nixos-cli-offline
     ```
     and re-pinning inputs in the target flake with the proxy URL:
     ```
-    ISO_INPUT_OVERRIDES="determinate=tarball+http://my-nix-cache.lan/flakehub/f/DeterminateSystems/determinate/3.21.9.tar.gz?narHash=sha256-IrqJV%2B9NcFevwyBBqEkxkbqhX3rtJI7sSzHz5wDVaLo%3D"
+    ISO_INPUT_OVERRIDES="determinate=tarball+http://my-nix-cache.lan/flakehub-api/f/pinned/DeterminateSystems/determinate/3.22.0/019fdd2b-320e-7cf1-8321-a350e90231d9/source.tar.gz?narHash=sha256-KV12%2BFdIAecrnrS97IYhDUUotvnwYMrB%2BbXirUMPOdA%3D&rev=c5a93225f633faee482cbd0670e5d6dca0edf9de&revCount=431&lastModified=1786121778"
     ```
+
+    Each override replaces the input's lock entry, so carry its whole
+    identity from your `flake.lock`: `narHash`, plus `rev`, `revCount` and
+    `lastModified` (see `.env.example` for why). Overriding a top-level input
+    does not reroute its own inputs; a build that must fetch nothing upstream
+    needs one override per input path (`determinate/nix`, …).
 
     The .env file is automatically ingested by the `./tools/build-iso.sh` script
     and passes them to the ISO build process by building with the --impure flag.
