@@ -110,6 +110,18 @@ if [ -r "$repo/.env" ]; then
         echo "   lock entry, so the build takes whatever this route serves."
         echo "   Append ?narHash=<the lock's hash> to pin it (see .env.example)."
       fi
+      # Metadata check: a tarball override without &rev= mints a lock node
+      # with no flake metadata — version strings go "dirty", the drv matches
+      # no cache, and the build can fall into compiling from source
+      # (field-found 2026-08-18: Determinate nix-src -> sentry-native).
+      case "$input_url" in
+        tarball+*rev=*) : ;;
+        tarball+*)
+          echo "   WARNING: no &rev= on this tarball override — the minted lock"
+          echo "   node loses rev/revCount/lastModified and drvs that embed"
+          echo "   version metadata drift off every cache (see .env.example)."
+          ;;
+      esac
       nix_args+=(--override-input "$input_name" "$input_url")
     done
   fi
