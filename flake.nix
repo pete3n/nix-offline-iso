@@ -27,7 +27,10 @@
       ...
     }@inputs:
     let
-      shared = import ./nix/lib.nix { inherit nixpkgs; };
+      shared = import ./nix/lib.nix {
+        inherit nixpkgs;
+        builderSource = self.outPath;
+      };
 
       # Instantiate every variant's wiring for one system. 
       variantsFor = system: {

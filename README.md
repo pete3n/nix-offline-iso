@@ -119,9 +119,10 @@ Every harness in `tools/` runs quickly without building an ISO:
 `test-offline-install-args.sh` (installer arg safety for disk partitioning), 
 `test-offline-rebuild.sh <variant-configs>` (target config offline rebuild test),
 `test-overlay.sh` / `test-proxy-screen.sh` (proxy URL config test), 
-`test-proxied-install.sh`. `test-drv-identity.sh` (needs network) dry-runs the
-`determinate-cli-offline` build and fails if it would compile Determinate Nix
-from source; run it before building that ISO. 
+`test-proxied-install.sh`, `test-flake-subdir.sh` (what the bake copies to
+`/iso/nix-cfg` for default and `?dir=` targets). `test-drv-identity.sh` (needs
+network) dry-runs the `determinate-cli-offline` build and fails if it would
+compile Determinate Nix from source; run it before building that ISO. 
 
 ## Versioning
 

@@ -101,6 +101,9 @@ else
   skip_suite "overlay" "no calamares-nixos-extensions checkout found; pass --calamares-src"
 fi
 
+# ── Bake shape: evaluation only, writes .drv files to the nix store ──
+run_suite "flake-subdir" "$script_dir/test-flake-subdir.sh"
+
 # ── Offline-rebuild probes: one per variant that bakes a target flake ──
 # The channels-shaped configs and the proxied variants have no probe: the
 # former are not flakes, the latter deliberately bake no target (ADR 0003).

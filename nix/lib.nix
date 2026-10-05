@@ -1,6 +1,11 @@
 # Shared library for building all ISO variants.
 # Variant specific configs are found in: variants/<variant>/iso.nix
-{ nixpkgs }:
+{
+  nixpkgs,
+  # This repo's own source (the flake's self.outPath). The default targets
+  # are relative inputs inside it; see flakeSubdir.
+  builderSource ? null,
+}:
 rec {
   systems = [
     "x86_64-linux"
@@ -282,13 +287,19 @@ rec {
       # inputs (`path:../../lib`). Its outPath is then <source>/<subdir>, and
       # the ISO must carry the whole source tree, or those inputs are out of
       # reach at install time. "" for a flake at the root of its source.
+      # A default target (path:./variants/<v>/configs/flake) is a relative
+      # input, so Nix reports this repo as its source too. It has no relative
+      # inputs of its own, so it is self-contained: bake just the flake, not
+      # the whole builder. A target in this repo that does have relative
+      # inputs still needs the tree.
       sourceRoot = targetFlake.sourceInfo.outPath or targetFlake.outPath;
+      hasRelativeInputs = builtins.any isRelativePath (builtins.attrValues rawLock.nodes);
       flakeSubdir =
         let
           root = toString sourceRoot;
           flakePath = toString targetFlake.outPath;
         in
-        if flakePath == root then
+        if flakePath == root || (root == toString builderSource && !hasRelativeInputs) then
           ""
         else
           builtins.substring (builtins.stringLength root + 1) (-1) flakePath;
