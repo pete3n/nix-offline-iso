@@ -17,6 +17,27 @@ server. Each installer variant comes with a NixOS community version and a
 | determinate-cli-offline | Determinate | CLI + script | Completely offline |
 | determinate-cli-proxied | Determinate | CLI + script | Reverse-proxy |
 
+## Intent
+
+Pick an installer by what the network can reach at install time:
+
+- **`determinate-cli-offline`**: for the infrastructure the rest of a
+  network depends on, such as its cache proxy, its forge or its identity
+  server. These hosts must install and reinstall while the network is down,
+  so the ISO carries everything the install needs. Build it on any machine
+  that can fetch the target's inputs: an internet-connected builder outside
+  the network if the network is gone, or a builder inside it through its
+  proxy. It bakes no derivation closure, so its targets commit their
+  hardware configuration and carry their own rebuild tools (see its
+  README).
+- **`determinate-cli-proxied`**: for every other host, once a cache proxy
+  exists. The ISO bakes nothing; the install fetches through the proxy, so
+  the ISO stays small and can be built from inside the network.
+- **`nixos-*`**: general-purpose installers on community NixOS, offline and
+  proxied, CLI and graphical. They are maintained alongside the Determinate
+  products for anyone who wants the stock ecosystem or a graphical
+  installer.
+
 
 ## Usage
 Either run the provide builder script from `./tools/build-iso.sh` or use nix build
