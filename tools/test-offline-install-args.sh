@@ -92,6 +92,16 @@ TEST_DISKO_PROBE="@no-disko@" \
 TEST_DISKO_PROBE="/dev/testdisk-declared" \
   run_installer no-disko-override 1 "no" "ERASE all data on /dev/vda" --no-disko --disk /dev/vda
 
+# 6. A .flake-dir naming a subdirectory with no flake.nix (left behind when
+#    the operator replaced the config) is ignored with a warning, and the
+#    top-level flake is used.
+printf 'hosts/gone\n' > "$work/cfg/.flake-dir"
+TEST_DISKO_PROBE="@no-disko@" \
+  run_installer stale-flake-dir 1 "no" \
+  "ignoring .*\.flake-dir && Using configuration from $work/cfg\$ && ERASE all data on /dev/vda" \
+  --disk /dev/vda
+rm "$work/cfg/.flake-dir"
+
 if [ -s "$destructive_log" ]; then
   echo ">> FAIL: destructive tools were invoked:"
   sed 's/^/   | /' "$destructive_log"

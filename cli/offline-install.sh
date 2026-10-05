@@ -69,11 +69,18 @@ fi
 
 # The flake's directory within a configuration source: the source itself,
 # or SUBDIR of it when the ISO carries a whole source tree (.flake-dir).
+# A .flake-dir whose SUBDIR has no flake.nix is ignored: it is a dotfile, so
+# `rm -rf /tmp/nix-cfg/*` leaves it behind when the operator swaps in their
+# own config, and it would hide that config's top-level flake.
 flake_subdir() {
+  local recorded
   if [ -n "$FLAKE_DIR" ]; then
     printf '%s' "$FLAKE_DIR"
   elif [ -s "$1/.flake-dir" ]; then
-    head -n 1 "$1/.flake-dir"
+    recorded="$(head -n 1 "$1/.flake-dir")"
+    if [ -e "$1/$recorded/flake.nix" ]; then
+      printf '%s' "$recorded"
+    fi
   fi
 }
 flake_path() {
@@ -114,6 +121,11 @@ if ! has_config "$src"; then
 fi
 # Pin the subdirectory now, so the installed copy uses the same one.
 FLAKE_DIR="$(flake_subdir "$src")"
+# Warn here, once, rather than in flake_subdir, which runs many times.
+if [ -z "$FLAKE_DIR" ] && [ -s "$src/.flake-dir" ]; then
+  echo "WARNING: ignoring $src/.flake-dir: $(head -n 1 "$src/.flake-dir") has no flake.nix." >&2
+  echo "         Using the top level of $src. Delete .flake-dir to silence this." >&2
+fi
 echo ">> Using configuration from $src${FLAKE_DIR:+ (flake in $FLAKE_DIR)}"
 
 # Resolve the flake config to install when --host was not given. Mirror the
